@@ -38,6 +38,11 @@
   pre + base
 }
 
+// 코드 하이라이트 테마 — Typst 기본 테마의 색 일부가 8pt 코드 배경에서 대비 4.5 미만이라
+// G14-C가 떨어진다(실측 #d73948 = 4.28). 대비 4.9 이상으로 다시 잡은 테마를 강제한다.
+// (show rule로 fill을 덮어써도 하이라이터 색이 이긴다 — 테마 교체가 유일한 해법.)
+#let code-theme = "code-theme.tmTheme"
+
 #let merged(tokens) = {
   let t = default-tokens
   for (k, v) in tokens { t.insert(k, v) }
@@ -273,6 +278,7 @@
     },
   )
   set text(font: t.body-font, size: t.body-size, fill: t.ink, lang: "ko", region: "KR")
+  set raw(theme: code-theme)
   // 고아/과부 2행 계약(pagination.md §3) — 기본값과 같아도 명시로 고정
   set text(costs: (orphan: 100%, widow: 100%, runt: 200%))
   set par(justify: true, leading: t.body-leading, spacing: 1.15em, first-line-indent: (amount: 1em, all: false))

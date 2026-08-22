@@ -168,6 +168,7 @@
   )
   // 행송 19pt 고정(사륙판 20행 격자): edge 고정 + leading=spacing=9pt
   set text(font: t.body-font, size: t.body-size, fill: t.ink, lang: "ko", region: "KR",
+  set raw(theme: code-theme)
     top-edge: 0.8em, bottom-edge: -0.2em)
   set text(costs: (orphan: 100%, widow: 100%, runt: 200%))
   set par(justify: true, leading: 9pt, spacing: 9pt,

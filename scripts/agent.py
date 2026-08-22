@@ -6,7 +6,8 @@
     python3 scripts/agent.py chapter  <book_dir> ch-01.md
     python3 scripts/agent.py all      <book_dir>
     python3 scripts/agent.py fix      <book_dir> [--rounds 6]
-    python3 scripts/agent.py auto     <book_dir>   # 조사→목차→집필→통과까지 한 번에
+    python3 scripts/agent.py diagrams <book_dir> [--figs 3]
+    python3 scripts/agent.py auto     <book_dir>   # 조사→목차→집필→도해→통과까지 한 번에
 
 이 스킬의 집필 주체는 스크립트가 아니라 에이전트다. 웹 UI에서도 같은 일을 하려면
 로컬에 설치된 `claude`를 헤드리스(-p)로 부르는 수밖에 없다 — 그 다리를 놓는 파일이다.
@@ -17,6 +18,7 @@
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -369,6 +371,11 @@ def _fix_plan(book_dir: Path, style: str) -> list:
             add(pg, need, f"장 끝 면 채움 {reach:.2f} — 0.88까지 올린다")
     for u in gates.get("G7-MID", {}).get("underfull", []):
         add(u["page"], (0.95 - u["reach"]) * cap, f"장 중간 면 {u['page']}이 {u['reach']:.2f}로 비어 있음")
+    # 제목이 면 끝에 홀로 남은 경우 — 앞 문단을 조금 늘려 제목을 다음 면으로 밀어낸다
+    for v in gates.get("G9", {}).get("violations", []):
+        m = re.match(r"p(\d+):", v)
+        if m:
+            add(int(m.group(1)), 3, f"면 끝에 제목이 홀로 남음({v[:40]})")
     out = []
     for f, (d, why) in plan.items():
         cur = len((book_dir / "chapters" / f).read_text(encoding="utf-8"))
@@ -400,11 +407,21 @@ def cmd_fix(book_dir: Path, rounds: int):
         for i, (f, d, why) in enumerate(plan):
             prev = history.get(f)
             if prev is not None and (prev > 0) == (d > 0) and abs(prev) > 0:
-                # 같은 방향으로 또 밀라고 나왔다 = 지난 회차가 안 먹혔다는 뜻. 반대로 간다.
-                plan[i] = (f, -abs(d) if d > 0 else abs(d),
-                           why + " (지난 회차와 같은 방향이라 반대로 시도)")
+                # 같은 방향으로 또 밀라고 나왔다 = 지난 회차가 안 먹혔다는 뜻. 반대로,
+                # 그리고 절반 폭으로 간다(같은 폭으로 뒤집으면 두 상태를 오간다 — 실측).
+                flip = -abs(d) if d > 0 else abs(d)
+                plan[i] = (f, int(flip / 2) or flip, why + " (반대 방향으로 절반만)")
+            elif prev is not None and (prev > 0) != (d > 0):
+                # 방향이 바뀌었다 = 지난 조절이 지나쳤다. 폭을 줄여 수렴시킨다.
+                plan[i] = (f, int(d / 2) or d, why + " (지난 회차를 지나쳐 절반만)")
         if not plan:
-            die("자동으로 고칠 수 없는 실패입니다. 게이트 출력을 직접 보세요:\n" + "\n".join(fails))
+            codes = sorted({re.match(r"FAIL ([A-Z0-9-]+)", f).group(1)
+                            for f in fails if re.match(r"FAIL ([A-Z0-9-]+)", f)})
+            die("이 실패는 원고 분량 조절로 고칠 수 없습니다: " + ", ".join(codes) + "\n"
+                + "\n".join(fails) + "\n\n"
+                "G3(판면 밖 넘침)은 표가 너무 넓거나 긴 코드·URL이 원인입니다 — 그 표의 열을 줄이세요.\n"
+                "G14-C(대비)·G2(폰트)는 원고가 아니라 스타일 설정 문제입니다.\n"
+                "G10(수치 날조)은 콜아웃의 숫자를 본문에도 넣거나 콜아웃에서 지우세요.")
         def fix_one(item):
             f, delta, why = item
             path = book_dir / "chapters" / f
@@ -438,8 +455,196 @@ def cmd_fix(book_dir: Path, rounds: int):
     die(f"{rounds}회차까지 통과하지 못했습니다. 원고를 직접 손보세요.")
 
 
+
+# ── 도해 ──────────────────────────────────────────────────────
+# 실제로 통과시켜 본 antv 템플릿만 남긴다. 카탈로그에는 113종이 있지만 좁은 판형에서
+# 8pt 하한을 넘기지 못하는 것이 많다(references/diagram-ledger.json).
+ANTV_SAFE = """- sequence-steps-simple : 3~4단계 절차. data.sequences = [{label, desc}]. 라벨 6자 이내
+- sequence-timeline-simple : 세로 타임라인. data.sequences. 세로로 길어 bf.width는 twothirds 권장
+- list-row-simple-horizontal-arrow : 가로 3~4항목. data.sequences
+- list-column-simple-vertical-arrow : 세로 3~4항목. data.lists
+- compare-binary-horizontal-simple-vs : 두 갈래 대비. data.compares = [{label, children:[{label, desc}]}]"""
+
+AUTHORED_RULES = """직접 그리는 SVG 규칙(어기면 빌드가 거부한다):
+- 색은 토큰만 쓴다: {{brand}} {{ink}} {{muted}} {{rule}} {{paper}} — 다른 색값 금지
+- <text>로 쓴다. 회전·세로쓰기 금지. 텍스트끼리 겹치면 실패
+- font-size는 viewBox 단위로 12 이상, viewBox 폭은 %VBMAX% 이하 (8pt 하한 환산)
+- 커넥터는 직각만(가로선+세로선). 대각선 금지. 화살촉은 <path>로 직접 그린다
+- 노드 9개·화살표 12개 이내. 넘으면 도해를 나눈다
+- 한자(漢字)는 쓰지 않는다. 한글·가나·영문·숫자만
+- 외부 링크·이미지·스타일시트 참조 금지, <svg> 하나로 자립"""
+
+
+def _diagram_plan(book_dir: Path, style: str, limit: int) -> list:
+    """어느 장에 어떤 도해가 필요한지 본문을 읽고 정한다."""
+    outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
+    digest = []
+    for c in outline:
+        p = book_dir / "chapters" / c["file"]
+        if p.exists():
+            digest.append(f"### {c['file']} — {c['title']}\n" + p.read_text(encoding="utf-8")[:1200])
+    prompt = f"""아래는 한국어 단행본의 각 장 앞부분이다. 그림(도해)이 실제로 이해를 돕는 자리를
+최대 {limit}곳 고른다. JSON만 출력한다.
+
+고르는 기준:
+- 순서·절차, 갈래 판단, 구성 요소의 관계처럼 **글로 읽으면 머리에 안 그려지는 것**만 고른다.
+- 이미 표로 정리된 내용은 고르지 않는다(표가 더 낫다).
+- 한 장에 하나까지. 장식용 그림은 만들지 않는다.
+
+track 선택:
+- "antv" : 3~4단계 절차, 가로/세로 항목 나열, 두 갈래 대비
+- "authored" : 분기가 있는 흐름도, 역할별 처리 경로(스위밍레인), 구성 요소 연결도
+
+출력:
+{{"figs": [{{"file": "ch-02.md", "track": "antv", "title": "도해 제목",
+  "what": "무엇을 보여야 하는지 한 문장", "anchor": "이 문장 바로 뒤에 넣어라(본문에서 그대로 복사한 한 문장)"}}]}}
+
+--- 본문 시작 ---
+{chr(10).join(digest)[:12000]}
+--- 본문 끝 ---"""
+    raw = strip_fence(claude(prompt))
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        die("도해 계획 JSON을 찾지 못했습니다:\n" + raw[:300])
+    figs = json.loads(m.group(0)).get("figs") or []
+    return figs[:limit]
+
+
+def _make_antv(book_dir: Path, fig: dict, name: str, width: str, retry_note: str = "") -> str:
+    prompt = f"""AntV Infographic DSL 사이드카를 만든다. JSON만 출력한다.
+
+도해 제목: {fig['title']}
+보여야 할 것: {fig['what']}
+
+쓸 수 있는 템플릿(이 목록 밖은 빌드가 거부한다):
+{ANTV_SAFE}
+
+출력 형식:
+{{"kind": "antv", "bf": {{"width": "{width}", "icons": false}},
+ "dsl": ["infographic <템플릿명>", "data", "  title 제목", "  <데이터키>",
+         "    - label 라벨", "      desc 설명", "..."]}}
+
+규칙:
+- 항목은 3~4개. 라벨은 6자 이내, desc는 12자 이내(글자가 8pt 밑으로 내려가면 실패한다).
+- 들여쓰기는 예시 그대로 2칸/4칸/6칸.
+- 본문에 없는 수치를 만들지 않는다.{retry_note}"""
+    raw = strip_fence(claude(prompt))
+    m = re.search(r"\{.*\}", raw, re.S)
+    if not m:
+        raise ValueError("사이드카 JSON을 찾지 못함")
+    sidecar = json.loads(m.group(0))
+    # 세로형 템플릿은 전폭으로 두면 면을 통째로 먹는다(실측: 타임라인 1개가 1면 점유,
+    # 캡션이 러닝푸터와 겹침). 폭을 2/3로 줄이면 높이도 같이 줄어든다.
+    first = (sidecar.get("dsl") or [""])[0]
+    if any(k in first for k in ("timeline", "list-column", "roadmap", "pyramid")):
+        sidecar.setdefault("bf", {})["width"] = "twothirds"
+    (book_dir / "diagrams" / f"{name}.json").write_text(
+        json.dumps(sidecar, ensure_ascii=False), encoding="utf-8")
+    return "antv"
+
+
+def _make_authored(book_dir: Path, fig: dict, name: str, width: str, vbmax: int,
+                   retry_note: str = "") -> str:
+    prompt = f"""SVG 도해를 직접 그린다. SVG 코드만 출력한다(설명·코드펜스 금지).
+
+도해 제목: {fig['title']}
+보여야 할 것: {fig['what']}
+
+{AUTHORED_RULES.replace('%VBMAX%', str(vbmax))}
+
+형태 지침:
+- 제목을 맨 위 가운데 <text>로 넣는다(font-size 15 안팎).
+- 상자는 <rect rx="6">, 채움은 {{{{paper}}}} 또는 {{{{rule}}}}, 강조 상자만 {{{{brand}}}}(글자는 {{{{paper}}}}).
+- 상자 안 설명은 12~13, 제목줄은 14~15.
+- 분기가 있으면 "예/아니오" 라벨을 선에서 6단위 이상 띄워 붙인다.
+{retry_note}"""
+    svg = strip_fence(claude(prompt))
+    i = svg.find("<svg")
+    if i < 0:
+        raise ValueError("SVG를 찾지 못함")
+    svg = svg[i:svg.rfind("</svg>") + 6]
+    (book_dir / "diagrams" / f"{name}.svg").write_text(svg, encoding="utf-8")
+    (book_dir / "diagrams" / f"{name}.json").write_text(
+        json.dumps({"kind": "authored", "bf": {"width": width}}, ensure_ascii=False),
+        encoding="utf-8")
+    return "authored"
+
+
+def _insert_ref(book_dir: Path, fig: dict, name: str) -> bool:
+    """본문에 이미지 참조를 단독 문단으로 끼운다(G0: 텍스트와 섞이면 실패)."""
+    p = book_dir / "chapters" / fig["file"]
+    if not p.exists():
+        return False
+    text = p.read_text(encoding="utf-8")
+    ref = f'![{fig["title"]}](../assets/{name}.svg "출처: 본문 정리")'
+    if ref in text:
+        return True
+    anchor = (fig.get("anchor") or "").strip()
+    if anchor and anchor in text:
+        text = text.replace(anchor, anchor + "\n\n" + ref, 1)
+    else:
+        # 앵커를 못 찾으면 마지막 절 앞에 둔다 — 장 끝(요점 콜아웃)보다는 위여야 한다.
+        i = text.rfind("\n## ")
+        if i < 0:
+            return False
+        text = text[:i] + "\n\n" + ref + text[i:]
+    p.write_text(text, encoding="utf-8")
+    return True
+
+
+def cmd_diagrams(book_dir: Path, limit: int):
+    book, style, _ = load(book_dir)
+    if style == "essay":
+        print("에세이 스타일은 무이미지가 원칙이라 도해를 넣지 않습니다.")
+        return
+    if book.get("images") == "none":
+        book["images"] = "vector"
+        (book_dir / "book.json").write_text(json.dumps(book, ensure_ascii=False, indent=2),
+                                            encoding="utf-8")
+        print("book.json images: none → vector (도해를 쓰려면 필요)")
+    tokens = json.loads((SKILL / "styles" / style / "tokens.json").read_text(encoding="utf-8"))
+    dg = tokens.get("diagram") or die(f"{style} 스타일은 도해를 지원하지 않습니다")
+    (book_dir / "diagrams").mkdir(exist_ok=True)
+    plan = _diagram_plan(book_dir, style, limit)
+    if not plan:
+        print("도해가 필요한 자리를 찾지 못했습니다.")
+        return
+    used = len(list((book_dir / "diagrams").glob("fig-*.json")))
+    made = []
+    for k, fig in enumerate(plan, 1):
+        name = f"fig-{used + k:02d}"
+        width = "full"
+        mm = dg["widths"]["twothirds" if width == "twothirds" else "full"]
+        vbmax = int(mm * 2.835 * 12 / 8)  # font-size 12 기준 viewBox 폭 상한
+        for attempt in (1, 2):
+            try:
+                note = "" if attempt == 1 else f"\n지난 시도가 이 이유로 거부됐다: {err}\n항목 수를 줄이고 라벨을 더 짧게 하라."
+                if fig.get("track") == "antv":
+                    _make_antv(book_dir, fig, name, width, note)
+                else:
+                    _make_authored(book_dir, fig, name, width, vbmax, note)
+            except ValueError as e:
+                print(f"  {name}: {e}")
+                break
+            r = subprocess.run(["node", str(SKILL / "scripts/render_diagrams.mjs"),
+                                str(book_dir), "--style", style],
+                               capture_output=True, text=True, timeout=900,
+                               env={**os.environ, "NODE_PATH": subprocess.run(
+                                   ["npm", "root", "-g"], capture_output=True, text=True).stdout.strip()})
+            if r.returncode == 0:
+                if _insert_ref(book_dir, fig, name):
+                    made.append(f"{name} ({fig['file']}, {fig.get('track')}) — {fig['title']}")
+                break
+            err = (r.stderr or r.stdout).strip().splitlines()[-1][:300]
+            print(f"  {name}: 렌더 거부 — {err}")
+            if attempt == 2:  # 두 번 실패하면 흔적을 지운다 (빌드를 막지 않도록)
+                for ext in (".json", ".svg"):
+                    (book_dir / "diagrams" / f"{name}{ext}").unlink(missing_ok=True)
+    print(f"OK diagrams: {len(made)}개" + ("\n  " + "\n  ".join(made) if made else ""))
+
+
 def cmd_auto(book_dir: Path, rounds: int, web: bool = False,
-             max_queries: int = 6, today: str = ""):
+             max_queries: int = 6, today: str = "", figs: int = 0):
     """주제만 있는 상태에서 통과본까지 — 조사 → 목차 → 집필 → (빌드·검사·수정) 반복."""
     rp = book_dir / "research.md"
     if not rp.exists() or len(rp.read_text(encoding="utf-8").strip()) < 40:
@@ -457,7 +662,10 @@ def cmd_auto(book_dir: Path, rounds: int, web: bool = False,
     from concurrent.futures import ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=3) as ex:
         list(ex.map(lambda c: cmd_chapter(book_dir, c["file"]), outline))
-    print("[4/4] 빌드·검사·수정 반복")
+    if figs:
+        print("[4/5] 도해 생성")
+        cmd_diagrams(book_dir, figs)
+    print("[5/5] 빌드·검사·수정 반복")
     cmd_fix(book_dir, rounds)
 
 
@@ -479,6 +687,17 @@ def demo():
     assert as_chapter("제목이 없는 응답") is None
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp); (d / "chapters").mkdir()
+        ch = d / "chapters" / "ch-01.md"
+        ch.write_text("# 제목\n\n앵커 문장이다.\n\n## 절1\n\n본문\n\n## 요점\n\n끝\n")
+        assert _insert_ref(d, {"file": "ch-01.md", "title": "그림", "anchor": "앵커 문장이다."}, "fig-01")
+        body = ch.read_text()
+        assert "앵커 문장이다.\n\n![그림](../assets/fig-01.svg" in body, body
+        assert _insert_ref(d, {"file": "ch-01.md", "title": "둘", "anchor": "없는 문장"}, "fig-02")
+        body = ch.read_text()
+        assert body.index("![둘]") < body.index("## 요점"), "마지막 절 앞에 들어가야 한다"
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
         d = Path(tmp)
         (d / "outline.json").write_text(json.dumps({"chapters": [{"title": "1장 제목"}]}))
         assert _outline_is_stub(d), "자리표시자 목차를 실제 목차로 봤다"
@@ -490,7 +709,7 @@ def demo():
 def main():
     global MODEL
     ap = argparse.ArgumentParser(description="목차·원고를 claude CLI에게 맡긴다")
-    ap.add_argument("task", choices=["research", "outline", "chapter", "all", "fix", "auto", "selfcheck"])
+    ap.add_argument("task", choices=["research", "outline", "chapter", "all", "diagrams", "fix", "auto", "selfcheck"])
     ap.add_argument("book_dir", nargs="?")
     ap.add_argument("target", nargs="?")
     ap.add_argument("--topic")
@@ -499,6 +718,7 @@ def main():
     ap.add_argument("--web", action="store_true", help="조사 단계에서 웹 검색으로 사실 확인")
     ap.add_argument("--max-queries", type=int, default=6, help="웹 검색 최대 횟수(=질문 수)")
     ap.add_argument("--today", default="", help="확인일로 기록할 날짜 (YYYY-MM-DD)")
+    ap.add_argument("--figs", type=int, default=3, help="자동 생성할 도해 최대 개수")
     a = ap.parse_args()
     MODEL = a.model
     if a.task == "selfcheck":
@@ -514,7 +734,9 @@ def main():
     elif a.task == "outline":
         cmd_outline(d)
     elif a.task == "auto":
-        cmd_auto(d, a.rounds, a.web, a.max_queries, a.today)
+        cmd_auto(d, a.rounds, a.web, a.max_queries, a.today, a.figs)
+    elif a.task == "diagrams":
+        cmd_diagrams(d, a.figs)
     elif a.task == "fix":
         cmd_fix(d, a.rounds)
     elif a.task == "chapter":

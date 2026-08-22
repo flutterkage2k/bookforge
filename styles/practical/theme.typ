@@ -50,36 +50,50 @@
   page(margin: 0mm, header: none, footer: none, fill: c-pale, {
     set par(justify: false, first-line-indent: 0em)
     set text(font: t.display-font, fill: t.ink)
-    // 리본 꼬리(좌우 화살, 밴드 뒤로 살짝 내려 접힘 표현)
-    place(top + left, dx: 153mm / 2 - band-w / 2 - 6mm, dy: band-y + 1.6mm,
-      polygon(fill: c-deep, (0mm, 0mm), (8mm, 0mm), (8mm, band-h), (0mm, band-h), (2.6mm, band-h / 2)))
-    place(top + left, dx: 153mm / 2 + band-w / 2 - 2mm, dy: band-y + 1.6mm,
-      polygon(fill: c-deep, (0mm, 0mm), (8mm, 0mm), (5.4mm, band-h / 2), (8mm, band-h), (0mm, band-h)))
-    // 리본 본체 + 부제
-    place(top + center, dy: band-y,
-      box(width: band-w, height: band-h, fill: c-brand,
-        align(center + horizon,
-          text(size: 12.5pt, weight: "bold", fill: white, tracking: 0.02em,
-            meta.at("subtitle", default: meta.title)))))
+    // 리본(꼬리+본체+부제) — 부제가 없으면 통째로 그리지 않는다(빈 파란 띠·떠 있는 꼬리 방지)
+    let sub = meta.at("subtitle", default: none)
+    if sub != none and str(sub).trim() != "" {
+      place(top + left, dx: 153mm / 2 - band-w / 2 - 6mm, dy: band-y + 1.6mm,
+        polygon(fill: c-deep, (0mm, 0mm), (8mm, 0mm), (8mm, band-h), (0mm, band-h), (2.6mm, band-h / 2)))
+      place(top + left, dx: 153mm / 2 + band-w / 2 - 2mm, dy: band-y + 1.6mm,
+        polygon(fill: c-deep, (0mm, 0mm), (8mm, 0mm), (5.4mm, band-h / 2), (8mm, band-h), (0mm, band-h)))
+      place(top + center, dy: band-y,
+        box(width: band-w, height: band-h, fill: c-brand,
+          align(center + horizon,
+            text(size: 12.5pt, weight: "bold", fill: white, tracking: 0.02em, sub))))
+    }
     // 주제목 — 중앙 정렬, 마지막 단어만 brand 1.6배 (행 충돌 방지: stack으로 명시 간격)
     let title-top = band-y + band-h + 14mm
-    let title-block = block(width: 153mm,
-      stack(dir: ttb, spacing: 9mm,
+    let safe-w = 153mm - 2 * 14mm      // 좌우 안전 여백
+    let make-title(s) = block(width: safe-w,
+      stack(dir: ttb, spacing: calc.max(6mm, s * 0.42),
         ..if head != "" {
-          (align(center, text(size: title-size, weight: "black", tracking: -0.04em,
+          (align(center, text(size: s, weight: "black", tracking: -0.04em,
             keep-words(head))),)
         } else { () },
-        align(center, text(size: title-size * 1.6, weight: "black", tracking: -0.04em,
+        align(center, text(size: s * 1.6, weight: "black", tracking: -0.04em,
           fill: c-brand, emph))))
-    place(top + center, dy: title-top, title-block)
-    // 저자 — 제목 블록 실측 하단 아래로 밀어 배치(긴 제목이 여러 행으로 흐를 때 충돌 방지)
-    if "author" in meta {
-      context place(top + center,
-        dy: calc.max(178mm, title-top + measure(title-block).height + 8mm),
-        text(size: 10pt, {
-          text(weight: "bold", meta.author)
-          text(weight: "regular", " 지음")
-        }))
+    // 급수 자동 축소: 78pt는 짧은 제목 기준값이다. 긴 제목·긴 단어를 그대로 그리면
+    // 강조 단어(1.6배)가 판면을 넘어 G3(오버플로)로 떨어진다 — 실측: 5단어 제목에서 재현.
+    context {
+      let s = title-size
+      let fits(sz) = {
+        let m = measure(make-title(sz))
+        let w = measure(text(size: sz * 1.6, weight: "black", tracking: -0.04em, emph)).width
+        m.height <= 96mm and w <= safe-w
+      }
+      while s > 24pt and not fits(s) { s = s - 2pt }
+      let title-block = make-title(s)
+      place(top + center, dy: title-top, title-block)
+      // 저자 — 제목 블록 실측 하단 아래로 밀어 배치(긴 제목이 여러 행으로 흐를 때 충돌 방지)
+      if "author" in meta {
+        place(top + center,
+          dy: calc.max(178mm, title-top + measure(title-block).height + 8mm),
+          text(size: 10pt, {
+            text(weight: "bold", meta.author)
+            text(weight: "regular", " 지음")
+          }))
+      }
     }
     // 발행처 락업 — 하단 중앙
     place(bottom + center, dy: -12mm, {
@@ -258,6 +272,7 @@
     header: none,
   )
   set text(font: t.body-font, size: t.body-size, fill: t.ink, lang: "ko", region: "KR")
+  set raw(theme: code-theme)
   set text(costs: (orphan: 100%, widow: 100%, runt: 200%))
   // STYLE B-1: 첫 줄 들여쓰기 없음, 단락 간격은 격자 1행으로 대체 —
   // spacing = leading + pitch ⇒ 문단 사이 기준선 거리 = 정확히 2행(격자 유지)

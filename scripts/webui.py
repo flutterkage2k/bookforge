@@ -312,9 +312,12 @@ const PANEL={
    <div class=row style="margin-top:10px">
      <button class=primary onclick="agent('all')">AI에게 전체 집필 맡기기</button>
      <button onclick="agent('chapter',chap)">이 장만 다시 쓰게 하기</button>
+     <button onclick="agent('diagrams')">AI에게 도해 넣기</button>
      <button onclick="saveFile(chap,'ta4')">직접 고친 내용 저장</button>
      <button onclick="go(5)">다음: 빌드</button></div>
-   <p class=hint style="margin-top:10px">자동 집필은 장당 1분 안팎 걸립니다. 목차의 요약과
+   <p class=hint style="margin-top:10px">‘도해 넣기’는 본문을 읽고 그림이 필요한 자리를 최대
+     3곳 골라 SVG나 차트를 만들어 넣습니다(에세이 스타일은 무이미지 원칙이라 건너뜁니다).
+     자동 집필은 장당 1분 안팎 걸립니다. 목차의 요약과
      2단계 자료를 근거로 씁니다 — 자료에 없는 수치는 쓰지 않도록 시켰습니다.</p>
    <details style="margin-top:12px"><summary class=muted>쓸 수 있는 문법</summary>
      <table><tr><th>요소</th><th>쓰는 법</th></tr>
@@ -467,7 +470,7 @@ def start_job(name: str, task: str, target: str | None,
     if JOB["running"]:
         raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
     d = book_dir(name)
-    if task not in ("research", "outline", "chapter", "all", "fix", "auto"):
+    if task not in ("research", "outline", "chapter", "all", "diagrams", "fix", "auto"):
         raise ValueError("unknown task")
     argv = [sys.executable, str(SKILL / "scripts/agent.py"), task, str(d)]
     if web and task in ("research", "auto"):

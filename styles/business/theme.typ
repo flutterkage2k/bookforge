@@ -353,6 +353,7 @@
     },
   )
   set text(font: t.body-font, size: t.body-size, fill: ink, lang: "ko", region: "KR")
+  set raw(theme: code-theme)
   set text(costs: (orphan: 100%, widow: 100%, runt: 200%))
   set par(justify: true, leading: t.body-leading, spacing: 1.0em, first-line-indent: 0em)
 

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- bookforge 코드 하이라이트 테마 — Typst 기본 테마의 색 몇 개가 8pt 코드 배경(#f3f3f3)에서
+     대비 4.5 미만이라 G14-C가 떨어진다(실측: #d73948 → 4.28). 여기 색은 전부 4.9 이상. -->
+<plist version="1.0"><dict>
+  <key>name</key><string>bookforge-contrast</string>
+  <key>settings</key><array>
+    <dict><key>settings</key><dict>
+      <key>background</key><string>#FFFFFF</string>
+      <key>foreground</key><string>#20242A</string>
+    </dict></dict>
+    <dict><key>scope</key><string>comment</string><key>settings</key><dict>
+      <key>foreground</key><string>#5A6470</string></dict></dict>
+    <dict><key>scope</key><string>keyword, storage, keyword.operator</string><key>settings</key><dict>
+      <key>foreground</key><string>#1A5FB4</string></dict></dict>
+    <dict><key>scope</key><string>string, string.quoted</string><key>settings</key><dict>
+      <key>foreground</key><string>#1F7A4D</string></dict></dict>
+    <dict><key>scope</key><string>constant, constant.numeric, constant.language</string><key>settings</key><dict>
+      <key>foreground</key><string>#B3261E</string></dict></dict>
+    <dict><key>scope</key><string>entity.name.function, support.function</string><key>settings</key><dict>
+      <key>foreground</key><string>#5B2A86</string></dict></dict>
+    <dict><key>scope</key><string>variable, entity.name, support.type</string><key>settings</key><dict>
+      <key>foreground</key><string>#20242A</string></dict></dict>
+  </array>
+</dict></plist>

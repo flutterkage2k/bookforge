@@ -59,6 +59,7 @@ def build_typst(book_dir: Path, book: dict, outline: dict, style_dir: Path):
         d.mkdir(parents=True, exist_ok=True)
 
     shutil.copy(SKILL / "templates" / "base.typ", style_snap / "base.typ")
+    shutil.copy(SKILL / "assets" / "code-theme.tmTheme", style_snap / "code-theme.tmTheme")
     shutil.copy(style_dir / "theme.typ", style_snap / "theme.typ")
     meta = dict(book)
     for name in ("cover-art.png", "cover.png", "cover.jpg"):

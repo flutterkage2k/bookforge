@@ -641,7 +641,12 @@ def main():
         if pg < first_ch or pg in structural or not p["_lines"]:
             continue
         last = p["_lines"][-1]
-        if last["size"] >= 1.3 * body_size and pg not in tails:  # 1.1~1.3 대역은 스탯 라벨·덱 오탐(폰트 판별은 백로그)
+        # 도해 안의 라벨은 제목이 아니다 — 면 끝에 도해가 오면 큰 급수 라벨이 마지막 행이 되어
+        # 제목 고립으로 오판된다(실측: 피라미드 도해의 '가장 적음' 라벨). 잉크 오브젝트(도해·이미지)
+        # 영역 안에 들어 있는 행은 검사에서 제외한다.
+        mid = (last["y0"] + last["y1"]) / 2
+        in_figure = any(o0 - 2 <= mid <= o1 + 2 for (o0, o1) in p.get("_objs", []))
+        if last["size"] >= 1.3 * body_size and pg not in tails and not in_figure:
             g9["violations"].append(f"p{pg}: 면 끝 제목 고립('{last['text'][:20]}')")
         if single_col and i > 0 and pages[i - 1]["_lines"] and pg - 1 >= first_ch \
                 and pg - 1 not in ch_starts:
