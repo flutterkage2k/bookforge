@@ -127,11 +127,22 @@ def g14a_toc_numbers(doc, titles, ch_starts):
         expected = ch_starts[i] - offset
         key = _norm(title)[:10]
         t_span, t_page = None, None
+        # 앞 10자만 보고 첫 히트를 쓰면 같은 접두사를 가진 '절' 행에 걸린다
+        # (실측: 장 'Pages와 Workers를 하나로 묶기'가 절 'Pages와 Workers, 무엇으로…'에 매칭돼
+        #  쪽번호를 2로 읽음). 전체 제목 일치 → 급수(장 행이 절 행보다 크다) 순으로 고른다.
+        full = _norm(title)
+        best = None
         for p in toc_pages:
-            hit = [s for s in spans_by_page[p] if key and key in _norm(s["text"])]
-            if hit:
-                t_span, t_page = hit[0], p
-                break
+            for s in spans_by_page[p]:
+                n = _norm(s["text"])
+                if not key or key not in n:
+                    continue
+                score = (1 if (full in n or n in full) else 0,
+                         -abs(len(n) - len(full)), s.get("size", 0))
+                if best is None or score > best[0]:
+                    best = (score, s, p)
+        if best is not None:
+            _, t_span, t_page = best
         if t_span is None:
             all_joined = _norm("".join(s["text"] for p in toc_pages for s in spans_by_page[p]))
             if key not in all_joined:
