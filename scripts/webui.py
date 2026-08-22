@@ -220,8 +220,8 @@ function cardMsg(m){ return `<div class=card><p class=muted>${m}</p></div>`; }
 // 지금 무엇을 해야 하는지 한 줄로 — 상태에서 계산한다(모든 단계 상단에 같은 문장이 뜬다)
 function nextAction(){
   const s=state.steps;
-  if(!s.outline)  return ['3단계에서 장 제목을 하나 이상 넣고 저장하세요. 목차가 없으면 빌드가 실패합니다.',3];
-  if(!s.written)  return ['4단계에서 각 장의 본문을 쓰세요. 빈 원고로 빌드하면 게이트가 떨어집니다.',4];
+  if(!s.outline)  return ['3단계에서 “AI에게 목차 맡기기”를 누르거나 직접 장을 넣고 저장하세요.',3];
+  if(!s.written)  return ['4단계에서 “AI에게 전체 집필 맡기기”를 누르세요(장당 1분 안팎).',4];
   if(!s.built)    return ['5단계에서 ① 빌드를 누르세요.',5];
   if(!s.passed)   return ['5단계에서 ② 게이트를 누르세요. 통과해야 final PDF가 생깁니다.',5];
   if(!s.reviewed) return ['5단계에서 ③ 지면 이미지를 만들고, 6단계에서 눈으로 확인하세요.',5];
@@ -262,7 +262,11 @@ const PANEL={
      본문에 없는 숫자를 콜아웃에 쓰면 게이트(G10)가 잡습니다.</p>
    <textarea id=ta2 rows=18 placeholder="예)&#10;- 핵심 개념 정의:&#10;- 사례:&#10;- 수치(출처·연도 필수):&#10;- 논쟁점:&#10;- 인용할 문장:"></textarea>
    <div class=row style="margin-top:10px"><button class=primary onclick="saveFile('research.md','ta2')">저장</button>
+   <button onclick="agent('research')">AI에게 조사 맡기기</button>
    <button onclick="go(3)">다음: 목차</button></div>
+   <p class=hint style="margin-top:10px">‘AI에게 조사 맡기기’는 이 컴퓨터의 Claude Code를 불러
+     주제에 대한 조사 노트를 만들어 기존 내용 아래에 붙입니다. 확인 못 한 것은
+     ‘확인 필요’로 표시하도록 시켰습니다 — 그 항목은 직접 채워 주세요.</p>
  </div>`,
  3:()=>`<div class=card>
    <h2>목차</h2>
@@ -272,8 +276,9 @@ const PANEL={
      <th style="width:24%">목차 한 줄</th><th></th></tr></thead>
    <tbody>${(state.outline||[]).map((c,i)=>orow(c,i)).join('')}</tbody></table>
    <div class=row style="margin-top:12px">
+     <button class=primary onclick="agent('outline')">AI에게 목차 맡기기</button>
      <button onclick=addRow()>+ 장 추가</button>
-     <button class=primary onclick=saveOutline()>저장</button>
+     <button onclick=saveOutline()>직접 쓴 목차 저장</button>
      <span class=muted>${(state.outline||[]).length}개 장 ${
        state.steps.outline?'':'· 아직 비어 있습니다(빌드하려면 최소 1장 필요)'}</span>
    </div>
@@ -289,8 +294,13 @@ const PANEL={
        ${c.replace('chapters/','')} <span class=muted>${n<400?'미작성':n+'자'}</span></button>`;}).join('')
      || '<span class=muted>3단계에서 목차를 먼저 저장하세요.</span>'}</div>
    <textarea id=ta4 rows=22></textarea>
-   <div class=row style="margin-top:10px"><button class=primary onclick="saveFile(chap,'ta4')">저장</button>
+   <div class=row style="margin-top:10px">
+     <button class=primary onclick="agent('all')">AI에게 전체 집필 맡기기</button>
+     <button onclick="agent('chapter',chap)">이 장만 다시 쓰게 하기</button>
+     <button onclick="saveFile(chap,'ta4')">직접 고친 내용 저장</button>
      <button onclick="go(5)">다음: 빌드</button></div>
+   <p class=hint style="margin-top:10px">자동 집필은 장당 1분 안팎 걸립니다. 목차의 요약과
+     2단계 자료를 근거로 씁니다 — 자료에 없는 수치는 쓰지 않도록 시켰습니다.</p>
    <details style="margin-top:12px"><summary class=muted>쓸 수 있는 문법</summary>
      <table><tr><th>요소</th><th>쓰는 법</th></tr>
      <tr><td>절 / 항</td><td><code>## 절 제목</code> · <code>### 항 제목</code></td></tr>
@@ -386,6 +396,25 @@ async function run(cmd){
   $('log').textContent=(r.out||r.error)+'\n\n▶ 다음: '+msg;
   if(cmd==='sheet') go(6); else render();
 }
+async function agent(task,target){
+  if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
+  const r=await api('/api/agent',{name:book,task,target});
+  if(r.error){ $('log').textContent=r.error; return; }
+  $('log').textContent='AI 작업 시작 — 창을 닫지 마세요…';
+  poll();
+}
+let polling=false;
+async function poll(){
+  if(polling) return; polling=true;
+  const tick=async()=>{
+    const j=await api('/api/job');
+    $('log').textContent=(j.running?'작업 중… ':'')+ (j.log||'');
+    if(j.running){ setTimeout(tick,2000); }
+    else{ polling=false; await open_(book);
+      const [msg]=nextAction(); $('log').textContent=(j.log||'')+'\n\n▶ 다음: '+msg; }
+  };
+  tick();
+}
 async function loadFonts(){
   const d=await api('/api/fonts?lang='+$('flang').value);
   $('ffam').innerHTML=(d.fonts||[]).map(f=>
@@ -403,10 +432,41 @@ async function clearFont(){
   $('log').textContent=r.out||r.error; open_(book);
 }
 boot(); render(); loadFonts();
+api('/api/job').then(j=>{ if(j.running) poll(); });
 </script>
 """
 
 _FONTS = {}
+# 자동 집필은 몇 분씩 걸린다 — 한 번에 하나만, 진행 상황은 폴링으로 본다.
+JOB = {"running": False, "name": "", "task": "", "log": "", "done": True}
+
+
+def start_job(name: str, task: str, target: str | None):
+    """agent.py를 별도 스레드에서 돌린다. 서버는 응답을 막지 않는다."""
+    import threading
+    if JOB["running"]:
+        raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
+    d = book_dir(name)
+    if task not in ("research", "outline", "chapter", "all"):
+        raise ValueError("unknown task")
+    argv = [sys.executable, str(SKILL / "scripts/agent.py"), task, str(d)]
+    if task == "chapter":
+        if not CHAPTER_RE.match((target or "").replace("chapters/", "")):
+            raise ValueError("bad chapter file")
+        argv.append(target.replace("chapters/", ""))
+    JOB.update({"running": True, "name": name, "task": task, "log": "시작…", "done": False})
+
+    def run():
+        try:
+            p = subprocess.run(argv, capture_output=True, text=True, timeout=7200)
+            JOB["log"] = (p.stdout + p.stderr).strip()[-4000:] or "(출력 없음)"
+        except Exception as e:  # 타임아웃·실행 실패도 화면에 남긴다
+            JOB["log"] = f"실패: {e}"
+        finally:
+            JOB.update({"running": False, "done": True})
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"ok": True}
 
 
 def _font_cache() -> dict:
@@ -587,6 +647,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/books":
                 names = sorted(p.parent.name for p in books_root().glob("*/book.json"))
                 return self._json({"books": names})
+            if u.path == "/api/job":
+                return self._json(JOB)
             if u.path == "/api/state":
                 return self._json(state(one("name")))
             if u.path == "/api/file":
@@ -629,6 +691,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(save_outline(data["name"], data.get("chapters") or []))
             if u.path == "/api/run":
                 return self._json(run_script(data["name"], data["cmd"]))
+            if u.path == "/api/agent":
+                return self._json(start_job(data["name"], data["task"], data.get("target")))
             if u.path == "/api/new":
                 return self._json(scaffold(data))
             if u.path == "/api/font":
