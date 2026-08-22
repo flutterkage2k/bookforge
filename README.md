@@ -43,7 +43,7 @@ macOS 기준입니다.
 | Python 3.11+ | 변환·품질 검사 | 필수 |
 | Typst 0.14+ | 실용·학술·에세이·비즈니스 조판 | 그 4종 못 씀 |
 | Node + Playwright(Chromium) | 리포트·매거진 조판, 도해 | 그 2종·도해 못 씀 |
-| Claude Code (`claude`) | 자동 조사·목차·집필·도해 | 자동화만 못 씀 (직접 쓰면 됩니다) |
+| Claude Code (`claude`) | 자동 조사·목차·집필·도해 — **실행하는 사람의 구독을 씁니다** | 자동화만 못 씀 (직접 쓰면 됩니다) |
 
 ```bash
 git clone https://github.com/flutterkage2k/bookforge.git
@@ -55,6 +55,21 @@ python3 -m venv .venv
 brew install typst                      # 선택: Typst 스타일 4종
 npm i -g playwright && npx playwright install chromium   # 선택: HTML 스타일·도해
 ```
+
+## 자동 집필은 어떻게 동작하나
+
+웹 UI 안에 AI가 들어 있지 않습니다. 서버는 **그 컴퓨터에 설치된 `claude` 명령을 그대로 부릅니다.**
+
+```
+브라우저 → 로컬 서버(webui.py) → scripts/agent.py → claude -p "..." → 결과를 파일로 저장
+```
+
+- 저장소에는 **API 키도 계정 정보도 없습니다.** 인증은 그 컴퓨터의 Claude Code 로그인(`~/.claude`)을 씁니다.
+- 따라서 **돌리는 사람의 구독이 쓰입니다.** 이 저장소를 클론한 사람은 자기 Claude Code 계정으로 실행되고, 저장소 주인의 사용량과는 무관합니다.
+- `claude`가 없으면 자동 집필 버튼만 "명령을 찾지 못했습니다"로 멈춥니다. 조판·검사·검수는 그대로 동작합니다 — 원고를 직접 쓰면 됩니다.
+- 에이전트에는 도구 권한을 주지 않습니다(웹 검색 조사만 예외로 `WebSearch` 하나). 응답은 stdout으로 받아 **이 스크립트가 정해진 파일에만** 씁니다.
+
+한 권(7장 기준)에 `claude` 호출이 30~40번 들어갑니다.
 
 ## 웹 UI
 
