@@ -16,7 +16,7 @@ import { convertForeignObjectText, fontFaceCss, normalizeAuthoredSvg, pixelSelfC
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FONT_DIR = path.join(SKILL, "assets", "fonts");
-const CONVERTER_VERSION = 4; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
+const CONVERTER_VERSION = 6; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
 const PIXEL_TOLERANCE = 0.02;
 const MM2PT = 72 / 25.4;
 
@@ -124,6 +124,38 @@ function alienColors(svg, palette, strict = false) {
     for (const d of s[1].matchAll(/(?:^|;)\s*(?:fill|stroke)\s*:\s*([^;]+)/gi)) check(d[1]);
   }
   return [...out];
+}
+
+// antv 트랙: 템플릿에 하드코딩된 강조색(vs 배지·화살표 그라데이션 등)은 theme palette로
+// 덮이지 않고 그대로 새어 나온다. 팔레트 밖 유채색만 밝기에 따라 팔레트 색으로 치환한다
+// (무채색 램프는 종전대로 보존 — alienColors 비-strict 규칙과 동일 기준).
+function remapAlienColors(svg, palette) {
+  const allowed = new Set([...palette.map((c) => normHex(c)), "#ffffff"]);
+  const aliens = new Set();
+  const scan = (raw) => {
+    const hex = normHex((raw || "").trim().toLowerCase());
+    if (!hex || allowed.has(hex)) return;
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    if (Math.max(r, g, b) - Math.min(r, g, b) <= 16) return; // 무채색 램프는 보존
+    aliens.add(hex);
+  };
+  // alienColors와 달리 gradient stop-color까지 본다 — 템플릿 강조색은 대부분 여기로 샌다
+  for (const m of svg.matchAll(/(?:fill|stroke|stop-color)="([^"]+)"/gi)) scan(m[1]);
+  for (const s of svg.matchAll(/style="([^"]*)"/gi)) {
+    for (const d of s[1].matchAll(/(?:^|;)\s*(?:fill|stroke|stop-color)\s*:\s*([^;]+)/gi)) scan(d[1]);
+  }
+  if (!aliens.size) return svg;
+  const brand = normHex(palette[0]), pale = normHex(palette[palette.length - 1]);
+  const pick = (hex) => {
+    const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.72 ? pale : brand;
+  };
+  let out = svg;
+  for (const hex of aliens) {
+    // ponytail: 정규화 hex 문자열만 치환 — rgb()·색이름 표기로 새는 색은 미대응(현 템플릿 산출은 전량 hex)
+    out = out.replace(new RegExp(hex, "gi"), pick(hex));
+  }
+  return out;
 }
 
 const diagramsDir = path.join(bookDir, "diagrams");
@@ -376,6 +408,7 @@ for (const file of sidecars) {
     fail(`${name}: 변환 자기검증 실패 — 픽셀 상이율 ${(check.ratio * 100).toFixed(2)}% > ${PIXEL_TOLERANCE * 100}% (${checkDir}/${name}.diff.png 확인)`);
   }
   converted = (await trimViewBox(page, converted)) || converted;
+  converted = remapAlienColors(converted, palette); // 템플릿 하드코딩 강조색 → 스타일 팔레트
   // 글자 하한은 트림 후 최종 좌표계 기준으로 검사 (트림은 실크기를 키우는 방향)
   const floors = fontFloorViolations(converted, widthKey);
   if (floors.length) fail(`${name}: 도해 내 글자 크기 하한 위반 — ${floors.join("; ")} (bf.width=${widthKey} 기준)`);

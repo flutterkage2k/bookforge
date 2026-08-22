@@ -13,20 +13,31 @@ const PRETENDARD_WEIGHTS = {
   "Pretendard-SemiBold.ttf": 600,
   "Pretendard-Bold.ttf": 700,
 };
+// 한자 폴백 — Pretendard는 kana까지만 커버한다. 폴백이 없으면 Chromium이 시스템 CFF 폰트로
+// 조용히 내려가 HTML 트랙에서 Type3 글리프가 생기고 G2가 떨어진다(Paperlogy는 CJK 한자 포함).
+const FALLBACK_WEIGHTS = {
+  "Paperlogy-4Regular.ttf": 400,
+  "Paperlogy-6SemiBold.ttf": 600,
+  "Paperlogy-7Bold.ttf": 700,
+};
+const TEXT_STACK = "'Pretendard','Paperlogy'";
 
 export function fontFaceCss(fontDir) {
-  return readdirSync(fontDir)
-    .filter((f) => f in PRETENDARD_WEIGHTS)
-    .map((f) => `@font-face{font-family:'Pretendard';src:url('file://${fontDir}/${f}');font-weight:${PRETENDARD_WEIGHTS[f]};}`)
-    .join("\n");
+  const files = readdirSync(fontDir);
+  const face = (f, family, weight) =>
+    `@font-face{font-family:'${family}';src:url('file://${fontDir}/${f}');font-weight:${weight};}`;
+  return [
+    ...files.filter((f) => f in PRETENDARD_WEIGHTS).map((f) => face(f, "Pretendard", PRETENDARD_WEIGHTS[f])),
+    ...files.filter((f) => f in FALLBACK_WEIGHTS).map((f) => face(f, "Paperlogy", FALLBACK_WEIGHTS[f])),
+  ].join("\n");
 }
 
 function harnessHtml(svg, fontDir) {
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 ${fontFaceCss(fontDir)}
 html,body{margin:0;padding:0;background:#fff;}
-#stage foreignObject, #stage foreignObject * { font-family:'Pretendard' !important; }
-#stage svg text, #stage svg tspan { font-family:'Pretendard' !important; }
+#stage foreignObject, #stage foreignObject * { font-family:${TEXT_STACK} !important; }
+#stage svg text, #stage svg tspan { font-family:${TEXT_STACK} !important; }
 </style></head><body><div id="stage">${svg}</div></body></html>`;
 }
 
@@ -56,7 +67,7 @@ export async function normalizeAuthoredSvg(page, rawSvg, fontDir) {
       if (m && (Math.abs(m.b) > 0.01 * Math.abs(m.a) || Math.abs(m.c) > 0.01 * Math.abs(m.d))) {
         throw new Error(`회전 라벨 금지 — <text> #${idx + 1} '${el.textContent.slice(0, 15)}'`);
       }
-      el.setAttribute("font-family", "Pretendard");
+      el.setAttribute("font-family", "Pretendard, Paperlogy");
       if (!el.getAttribute("font-size")) {
         el.setAttribute("font-size", parseFloat(cs.fontSize).toFixed(2));
       }
@@ -149,7 +160,7 @@ export async function convertForeignObjectText(page, rawSvg, fontDir) {
         const canvas = document.createElement("canvas");
         const ctx = canvas.getContext("2d");
         const fontSize = parseFloat(cs.fontSize);
-        ctx.font = `${cs.fontWeight} ${fontSize}px Pretendard`;
+        ctx.font = `${cs.fontWeight} ${fontSize}px Pretendard, Paperlogy`;
         const m = ctx.measureText("한Ag");
         const ascent = m.fontBoundingBoxAscent;
         const fontBox = m.fontBoundingBoxAscent + m.fontBoundingBoxDescent;
@@ -192,7 +203,7 @@ export async function convertForeignObjectText(page, rawSvg, fontDir) {
     for (const ln of lines) {
       const t = document.createElementNS(NS, "text");
       t.setAttribute("x", ln.x); t.setAttribute("y", ln.y);
-      t.setAttribute("font-family", "Pretendard");
+      t.setAttribute("font-family", "Pretendard, Paperlogy");
       t.setAttribute("font-size", ln.fontSize);
       t.setAttribute("font-weight", ln.fontWeight);
       t.setAttribute("fill", ln.fill);
