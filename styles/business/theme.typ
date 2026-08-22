@@ -32,8 +32,10 @@
 
 #let theme-tokens = default-tokens + (
   trim: (w: 200mm, h: 280mm),
-  // 본문 5컬럼 132.5mm + 바깥 마진 컬럼 22.5mm(+거터 5mm) 확보
-  margin: (top: 28mm, bottom: 30mm, left: 20mm, right: 47.5mm),
+  // 좌우 대칭 30mm — 종전 20/47.5는 바깥 마진 컬럼을 잡아둔 값이었으나 그 컬럼에
+  // 들어가는 것이 섹션 탭(재단선 안쪽 8mm, 폭 6mm)뿐이어서, 본문과 탭 사이 33.5mm가
+  // 빈 채로 남아 판면이 왼쪽으로 쏠려 보였다. 탭 자리는 16mm 여유로 유지된다.
+  margin: (top: 28mm, bottom: 30mm, left: 30mm, right: 30mm),
   brand: navy-700, brand-light: navy-100,
   ink: ink, muted: ink-60, paper: white,
   body-font: lang-fonts(meta, ("Pretendard", "Noto Serif KR")), sans-font: lang-fonts(meta, ("Pretendard", "Noto Serif KR")),
@@ -486,7 +488,7 @@
       (ch: 2.8mm, sec: 1.2mm, chs: 10.5pt, secs: 7.6pt,  num: 14pt),
     )
 
-    // 목차 면은 6컬럼 전폭(160mm)을 쓴다 — 바깥 마진 컬럼 해제
+    // 목차 면도 본문과 같은 판면 폭(좌우 대칭이 된 뒤로는 본문 설정과 동일)
     page(
       margin: (top: t.margin.top, bottom: t.margin.bottom,
         left: t.margin.left, right: t.margin.left),
