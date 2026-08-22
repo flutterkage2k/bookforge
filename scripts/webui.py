@@ -337,7 +337,7 @@ const PANEL={
      <button class="${state.steps.built&&!state.steps.passed?'primary':''}"
        ${state.steps.built?'':'disabled title="먼저 빌드하세요"'} onclick="run('qc')">② 게이트</button>
      <button ${state.steps.built?'':'disabled title="먼저 빌드하세요"'}
-       onclick="run('sheet')">③ 지면 이미지 만들기</button>
+       onclick="run('sheet')">③ 지면 이미지 만들기(전 지면)</button>
      <button onclick="agent('fix')">AI에게 게이트 통과까지 맡기기</button>
    </div>
    <p class=hint style="margin-top:8px">마지막 버튼은 빌드 → 검사 → 실패한 장의 분량 조절을
@@ -349,7 +349,11 @@ const PANEL={
    ${gateTable()}
  </div>`,
  6:()=>`<div class=card>
-   <h2>검수</h2>
+   <h2>검수 <button style="float:right" onclick="run('sheet')">지면 이미지 다시 만들기</button></h2>
+   ${state.shots.length && state.pages && state.shots.length < state.pages
+     ? `<p class="pill bad" style="display:block;padding:8px 12px">지면 이미지가 ${state.shots.length}장뿐입니다
+        (책은 ${state.pages}쪽). 위 버튼을 눌러 전 지면을 다시 만드세요 — 예전 방식으로 앞 6쪽만
+        만들어진 상태입니다.</p>` : ''}
    <p class=hint>지면을 눈으로 보고, 고칠 곳을 찾으면 그 쪽 아래 버튼으로 바로 갑니다.
      표지·차례는 <b>책 정보</b>와 스타일이 만들고, 본문 지면은 <b>그 장의 원고</b>가 만듭니다.
      쪽에 무엇이 몇 번째로 오는지는 직접 지정하지 않습니다 — 원고 순서와 분량이 정합니다.</p>
@@ -646,6 +650,7 @@ def state(name: str) -> dict:
         "sizes": {c: len((d / c).read_text().strip()) for c in chapters},
         "shots": shots,
         "pagemap": page_map(d, outline),
+        "pages": len(page_map(d, outline)),
         "gate": gate,
         "fonts": {k: v["family"] for k, v in (book.get("fonts") or {}).items()},
         "steps": {
