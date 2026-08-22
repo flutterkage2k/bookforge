@@ -15,8 +15,8 @@
   // 정체성: 서술(읽는 글)은 명조, 조작·라벨·수치(하는 글)는 고딕 — STYLE.md §정체성.
   // 본문 내 숫자·라틴은 Pretendard(고딕)로 분리해 "수치는 고딕" 계약을 문장 안에서도 지킨다.
   body-font: ((name: "Pretendard", covers: regex("[A-Za-z0-9%]")), "Noto Serif KR"),
-  sans-font: ("Pretendard",),
-  display-font: ("Pretendard",),
+  sans-font: ("Pretendard", "Noto Serif KR"),
+  display-font: ("Pretendard", "Noto Serif KR"),
   body-size: 9.8pt,       // 명조 9.8pt / 행송 18.28pt (KoPub바탕PL 9.8/19 실측 대체 — STYLE.md)
   // pitch 18.28pt = 판면 187mm(530pt) ÷ 정수 29행. Typst leading은 글리프 높이를 뺀
   // 잔여 간격이라 환산 필요: 실측 0.865em→15.62pt 기준 역산 1.137em ≈ 18.28pt.
@@ -62,7 +62,8 @@
           text(size: 12.5pt, weight: "bold", fill: white, tracking: 0.02em,
             meta.at("subtitle", default: meta.title)))))
     // 주제목 — 중앙 정렬, 마지막 단어만 brand 1.6배 (행 충돌 방지: stack으로 명시 간격)
-    place(top + center, dy: band-y + band-h + 14mm,
+    let title-top = band-y + band-h + 14mm
+    let title-block = block(width: 153mm,
       stack(dir: ttb, spacing: 9mm,
         ..if head != "" {
           (align(center, text(size: title-size, weight: "black", tracking: -0.04em,
@@ -70,9 +71,11 @@
         } else { () },
         align(center, text(size: title-size * 1.6, weight: "black", tracking: -0.04em,
           fill: c-brand, emph))))
-    // 저자
+    place(top + center, dy: title-top, title-block)
+    // 저자 — 제목 블록 실측 하단 아래로 밀어 배치(긴 제목이 여러 행으로 흐를 때 충돌 방지)
     if "author" in meta {
-      place(top + center, dy: 178mm,
+      context place(top + center,
+        dy: calc.max(178mm, title-top + measure(title-block).height + 8mm),
         text(size: 10pt, {
           text(weight: "bold", meta.author)
           text(weight: "regular", " 지음")
