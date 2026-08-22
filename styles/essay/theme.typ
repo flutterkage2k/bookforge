@@ -1,5 +1,5 @@
 // bookforge style: essay — 미니멀 에세이 (STYLE.md: 사륙판 128×188, 먹1도+포인트1색)
-#import "base.typ": default-tokens, keep-words, numpad, chapter-state, lang-fonts
+#import "base.typ": code-theme, default-tokens, keep-words, numpad, chapter-state, lang-fonts
 #import "base.typ" as base
 #let code-font = ((name: "DejaVu Sans Mono", covers: regex("[A-Za-z0-9]")), "Pretendard")
 
@@ -168,8 +168,8 @@
   )
   // 행송 19pt 고정(사륙판 20행 격자): edge 고정 + leading=spacing=9pt
   set text(font: t.body-font, size: t.body-size, fill: t.ink, lang: "ko", region: "KR",
-  set raw(theme: code-theme)
     top-edge: 0.8em, bottom-edge: -0.2em)
+  set raw(theme: code-theme)
   set text(costs: (orphan: 100%, widow: 100%, runt: 200%))
   set par(justify: true, leading: 9pt, spacing: 9pt,
     first-line-indent: (amount: 1em, all: false))

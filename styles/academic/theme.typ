@@ -1,5 +1,5 @@
 // bookforge style: academic — 학술·논문형 (STYLE.md: 신국판 153×225, 1도+먹)
-#import "base.typ": default-tokens, keep-words, chapter-state, lang-fonts
+#import "base.typ": code-theme, default-tokens, keep-words, chapter-state, lang-fonts
 #import "base.typ" as base
 #let code-font = ((name: "DejaVu Sans Mono", covers: regex("[A-Za-z0-9]")), "Pretendard")
 
@@ -227,9 +227,9 @@
   )
   // 행송 17.5pt 고정: top/bottom-edge 고정 + leading 7.5pt
   set text(font: t.body-font, size: 10pt, fill: ink, lang: "ko", region: "KR",
-  set raw(theme: code-theme)
     top-edge: 0.8em, bottom-edge: -0.2em, hyphenate: false,
     number-type: "lining", number-width: "tabular")
+  set raw(theme: code-theme)
   set text(costs: (orphan: 100%, widow: 100%, runt: 200%))
   set par(justify: true, leading: 7.5pt, spacing: 7.5pt,
     first-line-indent: (amount: 1em, all: true))
