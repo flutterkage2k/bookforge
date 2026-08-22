@@ -20,6 +20,35 @@ MD = MarkdownIt("commonmark").enable("table").enable("strikethrough")
 
 ESC = "\\`#$&_*@<>[]~^"
 
+def scan_images(md_text: str):
+    """이 변환기가 실제로 승격하는 이미지와, 승격되지 않는 이미지를 갈라 돌려준다.
+
+    빈 줄로 문단을 자르면 안 된다 — `## 제목`이나 목록은 빈 줄 없이도 문단을 끊는다.
+    검사(qc_gate G0)가 이 함수를 쓰게 해서 검사와 변환이 같은 규칙을 보게 한다.
+
+    반환: (승격되는 src 목록, 승격 안 되는 (src, 그 문단 원문) 목록)
+    """
+    promoted, mixed = [], []
+    tokens = MD.parse(md_text)
+    for i, tok in enumerate(tokens):
+        if tok.type != "inline":
+            continue
+        block = tokens[i - 1].type if i else ""
+        children = tok.children or []
+        imgs = [c for c in children if c.type == "image"]
+        if not imgs:
+            continue
+        alone = block == "paragraph_open" and all(
+            c.type in ("image", "softbreak", "text")
+            and (c.type != "text" or not c.content.strip())
+            for c in children)
+        if alone:
+            promoted.extend(dict(im.attrs).get("src", "") for im in imgs)
+        else:
+            mixed.extend((dict(im.attrs).get("src", ""), tok.content.strip()) for im in imgs)
+    return promoted, mixed
+
+
 def esc(text: str) -> str:
     out = []
     for ch in text:

@@ -93,12 +93,21 @@ def find_toc_pages(doc, titles, search_upto=7):
     def titles_on(pno):
         text = _norm(doc[pno].get_text())
         return {t for t in titles if _norm(t)[:10] and _norm(t)[:10] in text}
+
+    def is_toc_page(pno):
+        """목차 면에는 쪽번호 행이 여럿이고, 도비라에는 없다(있어도 자기 folio 하나).
+
+        종전에는 '새 제목 2개 이상'으로 도비라를 걸렀는데, 마지막 장 하나만 넘어간
+        목차 둘째 면까지 같이 잘려 그 장이 '제목 미발견'으로 떨어졌다(실측: 6장 구성).
+        """
+        return sum(1 for sp in _spans(doc[pno]) if sp["text"].strip().isdigit()) >= 3
+
     out = [start]
     covered = titles_on(start)
     nxt = start + 1
     while nxt in hits_by_page and len(covered) < len(titles):
         new = titles_on(nxt) - covered
-        if len(new) < 2:  # 1개 재등장 = 도비라일 가능성 — 확장 중단
+        if not new or not is_toc_page(nxt):
             break
         out.append(nxt)
         covered |= new

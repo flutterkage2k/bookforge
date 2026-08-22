@@ -16,7 +16,7 @@ import { convertForeignObjectText, fontFaceCss, normalizeAuthoredSvg, pixelSelfC
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FONT_DIR = path.join(SKILL, "assets", "fonts");
-const CONVERTER_VERSION = 11; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
+const CONVERTER_VERSION = 12; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
 const PIXEL_TOLERANCE = 0.02;
 const MM2PT = 72 / 25.4;
 
@@ -149,6 +149,38 @@ function applyColorRoles(svg, roles) {
     if (!(key in roles)) fail(`알 수 없는 색 토큰 {{${key}}} — 사용 가능: ${Object.keys(roles).join(", ")}`);
     return roles[key];
   });
+}
+
+// antv 트랙: 템플릿이 단계 배지·막대 라벨에 흰 글자를 밝기와 무관하게 박는다. 램프 끝쪽
+// 연한 칸에서는 흰 글자가 대비 1.66까지 떨어져 G14-C가 떨어진다(실측: #ffffff on #c9c9c9).
+// 흰 글자는 어두운 면 위에서만 성립하므로, 바로 앞 도형이 밝으면 ink로 되돌린다.
+// (흰 글자가 도형 밖 = 종이 위여도 밝기 판정은 같으니 어느 쪽이든 안전하다.)
+function relLum(hex) {
+  const ch = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+function contrast(a, b) {
+  const [x, y] = [relLum(a), relLum(b)].sort((m, n) => n - m);
+  return (x + 0.05) / (y + 0.05);
+}
+function fixLabelContrast(svg, ink) {
+  const inkHex = normHex(ink) || "#1a1a1a";
+  let lastFill = "#ffffff"; // 아무 도형도 앞서지 않으면 종이 위로 본다
+  return svg.replace(
+    /<(polygon|rect|path|circle|ellipse|text)\b([^>]*)>/gi,
+    (tag, name, attrs) => {
+      const fm = attrs.match(/fill="([^"]+)"/i);
+      const hex = fm ? normHex(fm[1].trim().toLowerCase()) : null;
+      if (name.toLowerCase() !== "text") {
+        if (hex) lastFill = hex;
+        return tag;
+      }
+      if (hex !== "#ffffff" || contrast("#ffffff", lastFill) >= 4.5) return tag;
+      return tag.replace(fm[0], `fill="${inkHex}"`);
+    });
 }
 
 // antv 트랙: 템플릿에 하드코딩된 강조색(vs 배지·화살표 그라데이션 등)은 theme palette로
@@ -434,6 +466,7 @@ for (const file of sidecars) {
   }
   converted = (await trimViewBox(page, converted)) || converted;
   converted = remapAlienColors(converted, palette); // 템플릿 하드코딩 강조색 → 스타일 팔레트
+  converted = fixLabelContrast(converted, (dg.roles && dg.roles.ink) || palette[0]); // 연한 칸 위 흰 라벨 → ink (G14-C)
   // 글자 하한은 트림 후 최종 좌표계 기준으로 검사 (트림은 실크기를 키우는 방향)
   const floors = fontFloorViolations(converted, widthKey);
   if (floors.length) fail(`${name}: 도해 내 글자 크기 하한 위반 — ${floors.join("; ")} (bf.width=${widthKey} 기준)`);

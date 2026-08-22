@@ -34,6 +34,7 @@ except ImportError:
     import fitz
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from md2typ import scan_images  # noqa: E402
 from pagemetrics import analyze  # noqa: E402
 
 SKILL = Path(__file__).resolve().parent.parent
@@ -183,17 +184,15 @@ def g0_svg_check(book_dir, outline):
         p = book_dir / "chapters" / ch["file"]
         if not p.exists():
             continue
-        paragraphs = re.split(r"\n\s*\n", p.read_text(encoding="utf-8"))
-        for para in paragraphs:
-            refs = IMG_REF_RE.findall(para)
-            if not refs:
+        # md2typ의 판정을 그대로 쓴다 — 빈 줄로 문단을 자르면 `## 제목`이 문단을
+        # 끊는 경우를 놓쳐 멀쩡한 도해를 혼합으로 오판한다(실제로 오판했다).
+        promoted, mixed = scan_images(p.read_text(encoding="utf-8"))
+        for src, para in mixed:
+            if not src.endswith(".svg"):
                 continue
-            # md2typ 승격 조건: 이미지 단독 문단이 아니면 이미지가 조용히 증발한다
-            rest = IMG_REF_RE.sub("", para).strip()
-            if rest:
-                problems.append(f"{ch['file']}: SVG 이미지 문단에 다른 텍스트 혼합 — "
-                                f"단독 문단이어야 승격됨: '{para.strip()[:50]}…'")
-            referenced.extend(refs)
+            problems.append(f"{ch['file']}: SVG 이미지 문단에 다른 텍스트 혼합 — "
+                            f"단독 문단이어야 승격됨: '{para[:50]}…'")
+        referenced.extend(src for src in promoted if src.endswith(".svg"))
     for ref in referenced:
         name = ref[len("../assets/"):]
         svg_path = book_dir / "assets" / name
@@ -422,18 +421,28 @@ def main():
         nxt = pages[i + 1]
         fl, ft, fr, fb = nxt["frame"]
         # 텍스트는 나눠 흐를 수 있으므로 면제 사유가 못 된다 — 객체(표 괘선·그림·박스)만 본다.
+        # 위치가 아니라 크기로 판정한다: figure(placement: bottom)로 밀린 도해는 다음 면
+        # '아래쪽'에 앉으므로, 종전의 "다음 면이 객체로 시작" 조건에 걸리지 않아
+        # 멀쩡한 구조 파생 여백이 원고 탓으로 떨어졌다(실측: 학술 p9, 도해 높이 366 > 잔여 119).
         segs = sorted(nxt["_objs"])
-        if not segs or segs[0][0] > ft + 2 * pitch_ref:
-            continue  # 다음 면이 객체로 시작하지 않으면 밀림이 아니다
-        top0, cur1 = segs[0]
+        if not segs:
+            continue
+        blocks, top0, cur1 = [], segs[0][0], segs[0][1]
         for a, b in segs[1:]:
             if a - cur1 > pitch_ref * 3:  # 표는 모든 행에 괘선이 있지 않다 — 행 건너뜀 허용
-                break
+                blocks.append(cur1 - top0)
+                top0, cur1 = a, b
+                continue
             cur1 = max(cur1, b)
-        first_block_h = cur1 - top0
+        blocks.append(cur1 - top0)
+        biggest = max(blocks)
+        # 3행송 미만은 표 괘선 한 줄·구분선이지 '나눌 수 없는 통짜 블록'이 아니다.
+        # (슬랙만으로 면제가 붙어 16pt 조각이 여백을 정당화하던 구멍을 막는다)
+        if biggest < pitch_ref * 3:
+            continue
         remaining = (1 - p["reach"]) * (p["frame"][3] - p["frame"][1])
         # 블록은 CSS/Typst 마진을 데리고 다닌다 — 3행송 슬랙 인정
-        if first_block_h + pitch_ref * 3 > remaining:
+        if biggest + pitch_ref * 3 > remaining:
             float_pushed.add(p["page"])
     body_last = max((p["page"] for p in pages
                      if p["lines"] > 0 and p["page"] not in colophon_pages), default=n)
