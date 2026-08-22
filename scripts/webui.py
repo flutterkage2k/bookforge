@@ -130,6 +130,15 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  .chaps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
  .chaps button.on{border-color:var(--brand);color:var(--brand);font-weight:600}
  .muted{color:var(--mute);font-size:13px}
+ .lb{position:fixed;inset:0;background:#11151ae6;display:flex;align-items:center;
+   justify-content:center;z-index:50;padding:56px 16px 16px}
+ .lb img{max-height:calc(100vh - 76px);max-width:96vw;background:#fff;border-radius:6px;
+   box-shadow:0 12px 40px #0007}
+ .lbbar{position:fixed;top:0;left:0;right:0;height:48px;display:flex;gap:10px;align-items:center;
+   padding:0 14px;background:#0b0f14;color:#fff;font-size:13px}
+ .lbbar b{font-size:14px}
+ .lbbar button{background:#1d242c;border-color:#2c3540;color:#fff}
+ .lbbar button:hover{background:#28313b}
  .warnbox{margin:10px 0 0;padding:9px 10px;border:1px solid #f0b4ae;background:var(--bad-soft);
    color:var(--bad);border-radius:8px;font-size:12px;line-height:1.5}
  code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:13px}
@@ -402,10 +411,11 @@ const PANEL={
        ? `<button onclick="go(1)">책 정보 고치기</button>`
        : `<button onclick="pickChap('chapters/${src}');go(4)">${src} 고치기</button>`;
      return `<figure style="margin:0">
-       <img src="/qc?name=${book}&page=${s}&t=${Date.now()}" loading=lazy>
-       <figcaption class=muted style="display:flex;gap:6px;align-items:center;margin-top:4px">
-         <b>${pg}쪽</b>${src&&src!=='front'?`<span>${src}</span>`:'<span>앞부속</span>'}
-         <span style="flex:1"></span>${where}</figcaption></figure>`;}).join('')}</div>`
+       <img src="/qc?name=${book}&page=${s}&t=${Date.now()}" loading=lazy
+            style="cursor:zoom-in" onclick="viewPage(${pg})" title="클릭하면 크게 봅니다">
+       <figcaption class=muted style="margin-top:4px">
+         <div><b>${pg}쪽</b> ${src&&src!=='front'?src:'앞부속'}</div>
+         <div style="margin-top:4px">${where}</div></figcaption></figure>`;}).join('')}</div>`
      : '<p class=muted>5단계에서 “지면 이미지 만들기”를 먼저 누르세요.</p>'}
  </div>`,
 };
@@ -436,6 +446,52 @@ async function saveMeta(){
     author:$('mauthor').value,publisher:$('mpub').value,date:$('mdate').value,brand:$('mbrand').value});
   $('log').textContent=r.out||r.error;
   if(!r.error) open_(book);
+}
+// 지면 크게 보기 — 모니터 세로에 맞춘다. ← → 로 넘기고 Esc로 닫는다.
+let viewN = 0;
+function viewPage(n){
+  viewN = n;
+  let lb = $('lb');
+  if (!lb) {
+    lb = document.createElement('div');
+    lb.id = 'lb'; lb.className = 'lb';
+    lb.onclick = e => { if (e.target === lb) closeView(); };
+    document.body.appendChild(lb);
+    document.addEventListener('keydown', viewKeys);
+  }
+  drawView();
+}
+function drawView(){
+  const total = state.pages || (state.shots||[]).length;
+  const src = (state.pagemap||{})[String(viewN)];
+  const fix = !src ? '' : src === 'front'
+    ? `<button onclick="closeView();go(1)">책 정보 고치기</button>`
+    : `<button onclick="closeView();pickChap('chapters/${src}');go(4)">${src} 고치기</button>`;
+  $('lb').innerHTML = `
+    <div class=lbbar>
+      <b>${viewN} / ${total}쪽</b>
+      <span>${src && src !== 'front' ? src : '앞부속'}</span>
+      ${fix}
+      <span style="flex:1"></span>
+      <button onclick="stepView(-1)">← 이전</button>
+      <button onclick="stepView(1)">다음 →</button>
+      <button onclick="closeView()">닫기 (Esc)</button>
+    </div>
+    <img src="/page?name=${book}&n=${viewN}&dpi=150" alt="${viewN}쪽">`;
+}
+function stepView(d){
+  const total = state.pages || (state.shots||[]).length;
+  viewN = Math.min(total, Math.max(1, viewN + d));
+  drawView();
+}
+function closeView(){
+  const lb = $('lb');
+  if (lb) { lb.remove(); document.removeEventListener('keydown', viewKeys); }
+}
+function viewKeys(e){
+  if (e.key === 'Escape') closeView();
+  else if (e.key === 'ArrowRight') stepView(1);
+  else if (e.key === 'ArrowLeft') stepView(-1);
 }
 function gateTable(){
   const g=state.gate;
@@ -899,6 +955,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 return self.wfile.write(body)
+            if u.path == "/page":
+                # 크게 보기용 — 썸네일(80dpi)을 확대하면 뭉개진다. 볼 때만 그 쪽을 다시 뜬다.
+                d = book_dir(one("name"))
+                pdf = next(iter(sorted((d / "final").glob("*.pdf"))), d / "draft/book.pdf")
+                if not pdf.exists():
+                    return self._send(404, "text/plain", b"no pdf")
+                try:
+                    n = int(one("n") or 1)
+                    dpi = max(60, min(220, int(one("dpi") or 150)))
+                except ValueError:
+                    raise ValueError("bad page")
+                import pymupdf
+                doc = pymupdf.open(pdf)
+                if not 1 <= n <= doc.page_count:
+                    doc.close()
+                    raise ValueError("page out of range")
+                png = doc[n - 1].get_pixmap(dpi=dpi).tobytes("png")
+                doc.close()
+                return self._send(200, "image/png", png)
             if u.path == "/qc":
                 d = book_dir(one("name"))
                 img = d / "qc" / Path(one("page")).name
