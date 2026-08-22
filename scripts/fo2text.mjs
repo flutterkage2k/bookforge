@@ -44,12 +44,15 @@ export function fontFaceCss(fontDir, extraFaces = []) {
 }
 
 function harnessHtml(svg, fontDir, cjk = DEFAULT_CJK_FAMILY, extraFaces = []) {
+  // 기본 스택은 원본 SVG의 폰트 지정(AntV의 Alibaba PuHuiTi 등)을 덮되 !important는 쓰지 않는다.
+  // 실제로 박히는 서체는 요소별 pickFamily가 정하고, 그 값을 인라인 style로 걸어 '재는 서체'와
+  // '박는 서체'를 일치시킨다 — 종전에는 세리프로 재고 산세리프로 그려 폭이 어긋났다.
   const stack = `'${cjk}',${TEXT_STACK}`;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
 ${fontFaceCss(fontDir, extraFaces)}
 html,body{margin:0;padding:0;background:#fff;}
-#stage foreignObject, #stage foreignObject * { font-family:${stack} !important; }
-#stage svg text, #stage svg tspan { font-family:${stack} !important; }
+#stage foreignObject, #stage foreignObject * { font-family:${stack}; }
+#stage svg text, #stage svg tspan { font-family:${stack}; }
 </style></head><body><div id="stage">${svg}</div></body></html>`;
 }
 
@@ -90,7 +93,9 @@ export async function normalizeAuthoredSvg(page, rawSvg, fontDir, opts = {}) {
       if (m && (Math.abs(m.b) > 0.01 * Math.abs(m.a) || Math.abs(m.c) > 0.01 * Math.abs(m.d))) {
         throw new Error(`회전 라벨 금지 — <text> #${idx + 1} '${el.textContent.slice(0, 15)}'`);
       }
-      el.setAttribute("font-family", pickFamily(el.textContent));
+      const fam = pickFamily(el.textContent);
+      el.setAttribute("font-family", fam);
+      el.style.fontFamily = fam;   // 측정도 이 서체로 (아래 range 측정이 이 값을 쓴다)
       if (!el.getAttribute("font-size")) {
         el.setAttribute("font-size", parseFloat(cs.fontSize).toFixed(2));
       }
@@ -167,6 +172,8 @@ export async function convertForeignObjectText(page, rawSvg, fontDir, opts = {})
         if (!writing.startsWith("horizontal")) {
           throw new Error(`vertical/rotated text unsupported (writing-mode=${writing}) — DSL에서 회전 라벨 금지`);
         }
+        // 이 줄이 실제로 박힐 서체로 먼저 맞춘 뒤 잰다
+        if (node.parentElement) node.parentElement.style.fontFamily = pickFamily(raw);
         const charBoxes = [];
         for (let i = 0; i < raw.length; i++) {
           const r = document.createRange();

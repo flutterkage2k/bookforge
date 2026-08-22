@@ -245,7 +245,7 @@
       for k in ("ko", "ja", "en") {
         if k in uf { names.push(label.at(k) + " " + uf.at(k).at("family", default: "?")) }
       }
-      [지정 서체 — #names.join(" · ")]
+      if names.len() > 0 [지정 서체 — #names.join(" · ")]
       linebreak()
       // 동봉 서체는 OFL이지만 사용자가 고른 서체는 조건이 제각각이다 — 배포 전 확인 대상임을 남긴다.
       [지정 서체의 사용·배포 조건은 각 서체의 라이선스를 따릅니다.]

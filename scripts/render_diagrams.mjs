@@ -16,7 +16,7 @@ import { convertForeignObjectText, fontFaceCss, normalizeAuthoredSvg, pixelSelfC
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FONT_DIR = path.join(SKILL, "assets", "fonts");
-const CONVERTER_VERSION = 10; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
+const CONVERTER_VERSION = 11; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
 const PIXEL_TOLERANCE = 0.02;
 const MM2PT = 72 / 25.4;
 
@@ -39,11 +39,16 @@ if (bookMeta.brand) palette[0] = bookMeta.brand;
 // book.json fonts.ja — 도해 안의 한자·가나도 본문과 같은 폰트로 맞춘다.
 // (usvg는 font-family 목록을 순회하지 않으므로 '첫 가족'이 전부다 — fo2text 주석 참조)
 const jaFont = (bookMeta.fonts || {}).ja || null;
-const cjkOpts = jaFont
-  ? { cjk: jaFont.family,
-      extraFaces: (jaFont.files || []).filter((f) => f.format === "ttf")
-        .map((f) => ({ family: jaFont.family, path: f.path, weight: f.weight })) }
-  : {};
+const jaFaces = jaFont
+  ? (jaFont.files || []).filter((f) => f.format === "ttf")
+      .map((f) => ({ family: jaFont.family, path: f.path, weight: f.weight }))
+  : [];
+// Chromium에 물릴 수 있는 파일(@font-face는 ttf만)이 없으면 그 가족을 쓰지 않는다 —
+// 측정은 폴백 서체로, 베이크는 그 가족으로 가서 폭이 어긋난다.
+const cjkOpts = jaFont && jaFaces.length ? { cjk: jaFont.family, extraFaces: jaFaces } : {};
+if (jaFont && !jaFaces.length) {
+  console.log(`도해: ${jaFont.family}는 .ttf가 없어 도해에는 동봉 서체를 씁니다(본문은 그대로)`);
+}
 
 // 템플릿 적합성 실측 원장 — blocked 템플릿은 SSR 전에 차단 (minFontPt 사후 검사와 이중 방어)
 const ledger = JSON.parse(readFileSync(path.join(SKILL, "references", "diagram-ledger.json"), "utf8"));
@@ -126,10 +131,11 @@ function alienColors(svg, palette, strict = false) {
     if (!strict && Math.max(r, g, b) - Math.min(r, g, b) <= 16) return;
     out.add(hex);
   };
-  for (const m of svg.matchAll(/(?:fill|stroke)="([^"]+)"/gi)) check(m[1]);
-  // style="fill:...;stroke:..." 인라인 CSS도 동일 검사 (fill-opacity 등 접미 속성은 비매칭)
+  // 그라데이션 stop-color까지 본다 — 종전에는 remapAlienColors만 이걸 보고 alienColors는 놓쳐,
+  // authored 트랙의 "토큰 밖 색 금지" 계약이 stop-color에서만 조용히 뚫렸다.
+  for (const m of svg.matchAll(/(?:fill|stroke|stop-color)="([^"]+)"/gi)) check(m[1]);
   for (const s of svg.matchAll(/style="([^"]*)"/gi)) {
-    for (const d of s[1].matchAll(/(?:^|;)\s*(?:fill|stroke)\s*:\s*([^;]+)/gi)) check(d[1]);
+    for (const d of s[1].matchAll(/(?:^|;)\s*(?:fill|stroke|stop-color)\s*:\s*([^;]+)/gi)) check(d[1]);
   }
   return [...out];
 }
@@ -139,7 +145,7 @@ function alienColors(svg, palette, strict = false) {
 // 같은 원고를 다른 스타일로 옮길 때 손으로 색을 갈아야 한다(실측: insight 이식 시 4색 수동 교체).
 function applyColorRoles(svg, roles) {
   if (!roles) return svg;
-  return svg.replace(/\{\{\s*([a-z-]+)\s*\}\}/g, (m, key) => {
+  return svg.replace(/\{\{\s*([\w-]+)\s*\}\}/g, (m, key) => {
     if (!(key in roles)) fail(`알 수 없는 색 토큰 {{${key}}} — 사용 가능: ${Object.keys(roles).join(", ")}`);
     return roles[key];
   });
@@ -333,7 +339,7 @@ for (const file of sidecars) {
     }
     // palette 포함 필수: 스타일(팔레트) 교체 재빌드 시 캐시 미스로 alienColors 재검증 강제
     const hashA = createHash("sha256")
-      .update(JSON.stringify({ svg: rawAuthored, width: widthKey, palette, cjk: cjkOpts.cjk || null, v: CONVERTER_VERSION }))
+      .update(JSON.stringify({ svg: rawAuthored, width: widthKey, palette, cjk: cjkOpts.cjk || null, faces: cjkOpts.extraFaces || [], v: CONVERTER_VERSION }))
       .digest("hex");
     const outSvgA = path.join(assetsDir, `${name}.svg`);
     const outLabelsA = path.join(assetsDir, `${name}.labels.json`);
@@ -391,7 +397,7 @@ for (const file of sidecars) {
   dsl = applyTheme(dsl, palette);
 
   const hash = createHash("sha256")
-    .update(JSON.stringify({ dsl, width: widthKey, icons: wantIcons, cjk: cjkOpts.cjk || null, v: CONVERTER_VERSION }))
+    .update(JSON.stringify({ dsl, width: widthKey, icons: wantIcons, cjk: cjkOpts.cjk || null, faces: cjkOpts.extraFaces || [], v: CONVERTER_VERSION }))
     .digest("hex");
   const outSvg = path.join(assetsDir, `${name}.svg`);
   const outLabels = path.join(assetsDir, `${name}.labels.json`);

@@ -110,6 +110,10 @@ def apply_user_fonts(css: str, book: dict) -> str:
     fonts = book.get("fonts") or {}
     if not fonts:
         return css
+    # 일본어 폰트에는 한글이 있는 경우가 많다(범CJK 계열). 범위를 안 걸면 본문 한글까지
+    # 일본어 폰트가 먹어 Typst 트랙(lang-fonts는 ja를 가나·한자로 한정)과 결과가 갈린다.
+    JA_RANGE = ("U+3000-303F,U+3040-30FF,U+31F0-31FF,U+3400-4DBF,U+4E00-9FFF,"
+                "U+F900-FAFF,U+FF66-FF9D")
     faces, families = [], []
     for lang in ("en", "ja", "ko"):
         spec = fonts.get(lang)
@@ -117,16 +121,19 @@ def apply_user_fonts(css: str, book: dict) -> str:
             continue
         fam = spec["family"]
         families.append(f'"{fam}"')
+        rng = f"unicode-range:{JA_RANGE};" if lang == "ja" else ""
         for f in spec.get("files", []):
             if f.get("format") != "ttf":
                 continue
             faces.append(f'@font-face{{font-family:"{fam}";'
                          f'src:url("{Path(f["path"]).as_uri()}");'
-                         f'font-weight:{f.get("weight", 400)};font-style:normal;}}')
+                         f'font-weight:{f.get("weight", 400)};font-style:normal;{rng}}}')
     if not families:
         return css
     pre = ", ".join(families) + ", "
-    css = re.sub(r"(--(?:han|disp|num|serif|sans|display)\s*:\s*)", r"\g<1>" + pre, css)
+    # --num은 숫자용(Barlow·Gmarket Sans)이다. 영문 폰트를 고르지 않았다면 건드리지 않는다.
+    vars_ = "han|disp|serif|sans|display" + ("|num" if "en" in fonts else "")
+    css = re.sub(rf"(--(?:{vars_})\s*:\s*)", r"\g<1>" + pre, css)
     return "\n".join(faces) + "\n" + css
 
 
@@ -267,9 +274,9 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
     fonts = book.get("fonts") or {}
     label = {"ko": "한국어", "ja": "일본어", "en": "영문"}
     fontline = ""
-    if fonts:
-        names = " · ".join(f'{label[k]} {fonts[k]["family"]}' for k in ("ko", "ja", "en")
-                           if k in fonts)
+    names = " · ".join(f'{label[k]} {fonts[k]["family"]}' for k in ("ko", "ja", "en")
+                       if k in fonts)
+    if names:
         fontline = (f'<p>지정 서체 — {names}<br>'
                     '지정 서체의 사용·배포 조건은 각 서체의 라이선스를 따릅니다.</p>')
     html = tpl.substitute(

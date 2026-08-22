@@ -39,7 +39,6 @@ def inline(tokens) -> str:
         if ty == "text":
             out.append(esc(t.content))
         elif ty == "code_inline":
-            content = t.content.replace("`", "\\`")
             # 세미콜론으로 코드 모드를 명시적으로 닫는다. 없으면 뒤에 바로 붙는 `(`가
             # 함수 호출 인자로 읽혀 "the character `#` is not valid in code"로 빌드가 죽는다
             # (실측: `#raw("a")(또는 #raw("b"))` 형태의 한국어 문장에서 재현).

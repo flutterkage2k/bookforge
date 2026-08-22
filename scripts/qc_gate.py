@@ -607,11 +607,10 @@ def main():
             # 제목보다 콜아웃·표가 공기의 주범이라 블록 수가 더 정확한 대리변수다.
             gap_thr = 0.28
         elif style == "business":
-            # 액션 타이틀(16pt + 전폭 룰 + 전후 v1.8/1.1em)과 키 스탯 디스플레이가
-            # 면당 ~10mm(≈0.045)의 구조적 공기를 만든다(실측 — p13 홀 스캔). 디스플레이
-            # 행 수에 비례해 가산, 디스플레이 없는 순본문 면은 0.18 그대로.
-            heads = sum(1 for l in p["_lines"] if l["size"] >= 1.3 * body_size)
-            gap_thr = 0.18 + 0.05 * heads
+            # 액션 타이틀·키 스탯이 면당 ~10mm의 구조적 공기를 만든다(실측 — p13 홀 스캔).
+            # 종전에는 여기에 디스플레이 행 수 가산을 얹었는데, 아래 블록 경계 가산이
+            # 같은 여백을 한 번 더 세어 면제가 두 배로 벌어졌다 — 상수만 남긴다.
+            gap_thr = 0.22
         # 블록 경계 가산: 잉크 덩어리 사이마다 구조적 여백(제목 위 여백·콜아웃/표 앞뒤
         # 간격)이 한 번씩 붙는다. 덩어리 경계 하나당 격자 1행을 허용치로 인정한다.
         # 종전 임계는 '디스플레이 행 수'만 셌는데, 정작 공기를 만드는 것은 제목보다
@@ -645,7 +644,11 @@ def main():
         # 제목 고립으로 오판된다(실측: 피라미드 도해의 '가장 적음' 라벨). 잉크 오브젝트(도해·이미지)
         # 영역 안에 들어 있는 행은 검사에서 제외한다.
         mid = (last["y0"] + last["y1"]) / 2
-        in_figure = any(o0 - 2 <= mid <= o1 + 2 for (o0, o1) in p.get("_objs", []))
+        # _objs에는 콜아웃 배경·표 괘선도 들어 있다. 도해만 노리는 검사이므로
+        # 본문 3행보다 큰 덩어리에 들어 있는 행만 면제한다.
+        big = 3 * (m["book_pitch"] or 12)
+        in_figure = any(o0 - 2 <= mid <= o1 + 2 and (o1 - o0) >= big
+                        for (o0, o1) in p.get("_objs", []))
         if last["size"] >= 1.3 * body_size and pg not in tails and not in_figure:
             g9["violations"].append(f"p{pg}: 면 끝 제목 고립('{last['text'][:20]}')")
         if single_col and i > 0 and pages[i - 1]["_lines"] and pg - 1 >= first_ch \
