@@ -116,6 +116,8 @@ body {
 .chapter-body li { orphans: 2; widows: 2; }
 .chapter-body h2, .chapter-body h3 { break-after: avoid; }
 .chapter-body h2 { column-span: all; font-size: 17pt; line-height: 1.4; font-weight: 700;
+  position: relative; /* 절 pgmark(@@chNNsMM@@)의 앵커 — 없으면 마커가 문서 원점(1면)으로
+     붙어 목차 쪽번호와 폴리오가 어긋난다(G14-A). insight 팩과 동일 처리. */
   margin: 10.8mm 0 5.4mm; }
 .chapter-body h3 { font-size: 11pt; font-weight: 700; margin: 5.4mm 0 2.7mm; }
 .chapter-body ul, .chapter-body ol { margin: 0 0 5.4mm 5mm; }
