@@ -5,6 +5,8 @@
     python3 scripts/agent.py outline  <book_dir>
     python3 scripts/agent.py chapter  <book_dir> ch-01.md
     python3 scripts/agent.py all      <book_dir>
+    python3 scripts/agent.py fix      <book_dir> [--rounds 6]
+    python3 scripts/agent.py auto     <book_dir>   # 조사→목차→집필→통과까지 한 번에
 
 이 스킬의 집필 주체는 스크립트가 아니라 에이전트다. 웹 UI에서도 같은 일을 하려면
 로컬에 설치된 `claude`를 헤드리스(-p)로 부르는 수밖에 없다 — 그 다리를 놓는 파일이다.
@@ -95,6 +97,16 @@ def strip_fence(text: str) -> str:
     """모델이 전체를 코드펜스로 감싸면 벗긴다."""
     m = re.match(r"^```[a-zA-Z]*\n(.*)\n```$", text.strip(), re.S)
     return m.group(1).strip() if m else text.strip()
+
+
+def as_chapter(text: str) -> str | None:
+    """응답에서 원고 부분만 꺼낸다 — 앞머리 인사말이 붙어 오는 경우가 잦다."""
+    text = strip_fence(text)
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.startswith("# "):
+            return "\n".join(lines[i:]).strip()
+    return None
 
 
 def cmd_research(book_dir: Path, topic: str | None):
@@ -206,24 +218,193 @@ def cmd_chapter(book_dir: Path, filename: str):
 - 첫 문단은 이 장이 다루는 문제를 세우고, 마지막 문단은 다음 장으로 넘어가는 정리를 한다.
 - 절({'##'})은 2~4개. 각 절은 규칙이나 기준을 먼저 제시하고 예로 검증한다.
 - 앞뒤 장과 내용이 겹치지 않게 한다."""
-    text = strip_fence(claude(prompt))
-    first = text.splitlines()[0].strip() if text.splitlines() else ""
-    if not first.startswith("# "):
-        die(f"첫 줄이 '# 제목'이 아닙니다: {first[:60]}")
+    text = as_chapter(claude(prompt))
+    if not text:
+        die("응답에서 '# 제목'으로 시작하는 원고를 찾지 못했습니다.")
+    first = text.splitlines()[0].strip()
     if first[2:].strip() != ch["title"]:
         text = f"# {ch['title']}\n" + "\n".join(text.splitlines()[1:])
     (book_dir / "chapters" / filename).write_text(text.rstrip() + "\n", encoding="utf-8")
     print(f"OK chapter: {filename} ({len(text)}자)")
 
 
+def _outline_is_stub(book_dir: Path) -> bool:
+    """scaffold가 넣어 둔 자리표시자('1장 제목')는 목차가 아니다."""
+    p = book_dir / "outline.json"
+    if not p.exists():
+        return True
+    chapters = json.loads(p.read_text(encoding="utf-8")).get("chapters") or []
+    return not chapters or all("장 제목" in (c.get("title") or "") for c in chapters)
+
+
 def cmd_all(book_dir: Path):
-    if not (book_dir / "outline.json").exists() or not json.loads(
-            (book_dir / "outline.json").read_text(encoding="utf-8")).get("chapters"):
+    if _outline_is_stub(book_dir):
         cmd_outline(book_dir)
     outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
-    for c in outline:
-        cmd_chapter(book_dir, c["file"])
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:  # 장 7개를 순차로 부르면 7~10분 걸린다
+        list(ex.map(lambda c: cmd_chapter(book_dir, c["file"]), outline))
     print(f"OK all: {len(outline)}장 집필 완료 — 이제 빌드하세요.")
+
+
+
+# 한 행에 들어가는 글자 수(스타일 판면 실측 근사) — 게이트가 말하는 "몇 행"을
+# 원고에서 조절할 "몇 자"로 바꾸는 데 쓴다.
+CHARS_PER_LINE = {"practical": 35, "insight": 33, "academic": 31,
+                  "essay": 26, "business": 36, "magazine": 28}
+
+
+def _chapter_of(page: int, starts: list) -> str | None:
+    """페이지 번호 → 그 페이지가 속한 장의 파일명."""
+    cur = None
+    for start, f in starts:
+        if start <= page:
+            cur = f
+        else:
+            break
+    return cur
+
+
+def _fix_plan(book_dir: Path, style: str) -> list:
+    """gate-report + PDF 북마크 → [(파일명, 글자수 증감, 사유)] 계획.
+
+    게이트는 '몇 행 모자라다'까지만 말한다. 그 행을 어느 장에서 만들지는
+    장 시작 쪽번호로 역산해야 한다 — 그 역산이 이 함수다.
+    """
+    import pymupdf
+    report = json.loads((book_dir / "gate-report.json").read_text(encoding="utf-8"))
+    gates, metrics = report["gates"], report["metrics"]
+    outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
+    doc = pymupdf.open(book_dir / "draft" / "book.pdf")
+    titles = {c["title"]: c["file"] for c in outline}
+    starts = sorted((t[2], titles[t[1]]) for t in doc.get_toc() if t[0] == 1 and t[1] in titles)
+    doc.close()
+    if not starts:
+        die("PDF 북마크에서 장 시작 쪽을 찾지 못했습니다.")
+    cap = max((p["lines"] for p in metrics["pages"]), default=30)
+    cpl = CHARS_PER_LINE.get(style, 33)
+    plan = {}
+
+    def add(page, lines, why):
+        f = _chapter_of(page, starts)
+        if not f:
+            return
+        delta = int(lines * cpl)
+        if f in plan:  # 같은 장에 요구가 겹치면 큰 쪽을 남긴다
+            if abs(plan[f][0]) >= abs(delta):
+                return
+        plan[f] = (delta, why)
+
+    # 장별 본문 행수 — 흡수예산(pagination.md §4) 판정에 쓴다
+    by_page = {p["page"]: p for p in metrics["pages"]}
+    bounds = {}
+    for i, (start, f) in enumerate(starts):
+        end = starts[i + 1][0] - 1 if i + 1 < len(starts) else max(by_page)
+        bounds[f] = (start, end)
+
+    for tail in gates.get("G7-TAIL", {}).get("tails", []):
+        pg, reach, lines = tail["page"], tail["reach"], tail["lines"]
+        f = _chapter_of(pg, starts)
+        span = bounds.get(f, (pg, pg))
+        ch_lines = sum(by_page[p]["lines"] for p in range(span[0], span[1] + 1) if p in by_page)
+        # 흡수예산: 꼬리가 장 전체의 2.2% 이내면 앞으로 당겨 없애는 편이 싸다.
+        # 그 밖이면 늘려서 채우되, 반 면 넘게 늘려야 하면 그것도 줄이는 쪽이 싸다(실측: 늘리기는 진동한다).
+        need = (0.88 - reach) * cap
+        if lines < 6 or lines <= 0.022 * ch_lines or need > 0.5 * cap:
+            add(pg, -(lines + 3), f"장 끝 면 {lines}행({reach:.2f}) — 앞 면으로 당겨 없앤다")
+        elif reach < 0.75:
+            add(pg, need, f"장 끝 면 채움 {reach:.2f} — 0.88까지 올린다")
+    for u in gates.get("G7-MID", {}).get("underfull", []):
+        add(u["page"], (0.95 - u["reach"]) * cap, f"장 중간 면 {u['page']}이 {u['reach']:.2f}로 비어 있음")
+    out = []
+    for f, (d, why) in plan.items():
+        cur = len((book_dir / "chapters" / f).read_text(encoding="utf-8"))
+        d = int(max(-0.3 * cur, min(0.3 * cur, d)))  # 한 회차에 ±30%까지만 — 3배로 부푸는 사고 방지
+        if abs(d) >= 30:
+            out.append((f, d, why))
+    return out
+
+
+def cmd_fix(book_dir: Path, rounds: int):
+    """빌드 → 게이트 → 실패한 장 분량 조절을 통과할 때까지 반복한다."""
+    book, style, _ = load(book_dir)
+    history: dict[str, int] = {}
+    for r in range(1, rounds + 1):
+        b = subprocess.run([sys.executable, str(SKILL / "scripts/build.py"), str(book_dir)],
+                           capture_output=True, text=True, timeout=3600)
+        if b.returncode != 0:
+            die("빌드 실패:\n" + (b.stderr or b.stdout)[-800:])
+        q = subprocess.run([sys.executable, str(SKILL / "scripts/qc_gate.py"), str(book_dir)],
+                           capture_output=True, text=True, timeout=3600)
+        out = (q.stdout + q.stderr).strip()
+        if q.returncode == 0:
+            print(f"[{r}회차] 게이트 통과")
+            print(out.splitlines()[-1] if out else "")
+            return
+        fails = [l for l in out.splitlines() if l.startswith("FAIL")]
+        print(f"[{r}회차] 실패 {len(fails)}건: " + " / ".join(f[:60] for f in fails[:3]))
+        plan = _fix_plan(book_dir, style)
+        for i, (f, d, why) in enumerate(plan):
+            prev = history.get(f)
+            if prev is not None and (prev > 0) == (d > 0) and abs(prev) > 0:
+                # 같은 방향으로 또 밀라고 나왔다 = 지난 회차가 안 먹혔다는 뜻. 반대로 간다.
+                plan[i] = (f, -abs(d) if d > 0 else abs(d),
+                           why + " (지난 회차와 같은 방향이라 반대로 시도)")
+        if not plan:
+            die("자동으로 고칠 수 없는 실패입니다. 게이트 출력을 직접 보세요:\n" + "\n".join(fails))
+        def fix_one(item):
+            f, delta, why = item
+            path = book_dir / "chapters" / f
+            text = path.read_text(encoding="utf-8")
+            verb = f"약 {delta}자 늘려" if delta > 0 else f"약 {abs(delta)}자 줄여"
+            prompt = f"""아래는 한국어 단행본의 한 장이다. 조판 결과 다음 문제가 생겼다.
+
+문제: {why}
+할 일: 본문을 {verb}라.
+
+지키기:
+- 첫 줄 `# 제목`과 절 구조는 그대로 둔다.
+- 늘릴 때는 이미 있는 주장에 예·조건·반례를 덧붙인다. 새 주제를 만들지 않는다.
+- 줄일 때는 같은 말을 두 번 하는 문장, 수식어, 곁가지 예를 먼저 지운다.
+- 표·콜아웃은 유지한다. 마크다운 원고만 출력한다(설명 금지).
+
+--- 원고 시작 ---
+{text}
+--- 원고 끝 ---"""
+            new = as_chapter(claude(prompt))
+            if not new:
+                return f"  {f}: 응답에서 원고를 찾지 못해 건너뜀"
+            path.write_text(new.rstrip() + "\n", encoding="utf-8")
+            history[f] = delta
+            return f"  {f}: {len(text)}자 → {len(new)}자 ({why})"
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as ex:  # 순차로 돌리면 회차당 7~10분
+            for line in ex.map(fix_one, plan):
+                print(line, flush=True)
+    die(f"{rounds}회차까지 통과하지 못했습니다. 원고를 직접 손보세요.")
+
+
+def cmd_auto(book_dir: Path, rounds: int):
+    """주제만 있는 상태에서 통과본까지 — 조사 → 목차 → 집필 → (빌드·검사·수정) 반복."""
+    rp = book_dir / "research.md"
+    if not rp.exists() or len(rp.read_text(encoding="utf-8").strip()) < 40:
+        print("[1/4] 조사 노트 작성")
+        cmd_research(book_dir, None)
+    else:
+        print("[1/4] 자료가 이미 있어 조사는 건너뜁니다")
+    if _outline_is_stub(book_dir):
+        print("[2/4] 목차 설계")
+        cmd_outline(book_dir)
+    else:
+        print("[2/4] 목차가 이미 있어 건너뜁니다")
+    print("[3/4] 장별 집필")
+    outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        list(ex.map(lambda c: cmd_chapter(book_dir, c["file"]), outline))
+    print("[4/4] 빌드·검사·수정 반복")
+    cmd_fix(book_dir, rounds)
 
 
 def demo():
@@ -234,15 +415,31 @@ def demo():
     for style, (brief, rng) in BRIEF.items():
         assert brief and rng[0] < rng[1], style
     assert "지어내면" in CONTRACT and "코드펜스" in CONTRACT
+    starts = [(4, "ch-01.md"), (7, "ch-02.md"), (11, "ch-03.md")]
+    assert _chapter_of(4, starts) == "ch-01.md"
+    assert _chapter_of(6, starts) == "ch-01.md"
+    assert _chapter_of(11, starts) == "ch-03.md"
+    assert _chapter_of(3, starts) is None
+    assert as_chapter("네, 원고입니다.\n\n# 제목\n본문") == "# 제목\n본문"
+    assert as_chapter("```md\n# 제목\n본문\n```") == "# 제목\n본문"
+    assert as_chapter("제목이 없는 응답") is None
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        (d / "outline.json").write_text(json.dumps({"chapters": [{"title": "1장 제목"}]}))
+        assert _outline_is_stub(d), "자리표시자 목차를 실제 목차로 봤다"
+        (d / "outline.json").write_text(json.dumps({"chapters": [{"title": "빛부터 바꾼다"}]}))
+        assert not _outline_is_stub(d)
     print("demo ok")
 
 
 def main():
     ap = argparse.ArgumentParser(description="목차·원고를 claude CLI에게 맡긴다")
-    ap.add_argument("task", choices=["research", "outline", "chapter", "all", "selfcheck"])
+    ap.add_argument("task", choices=["research", "outline", "chapter", "all", "fix", "auto", "selfcheck"])
     ap.add_argument("book_dir", nargs="?")
     ap.add_argument("target", nargs="?")
     ap.add_argument("--topic")
+    ap.add_argument("--rounds", type=int, default=6)
     a = ap.parse_args()
     if a.task == "selfcheck":
         return demo()
@@ -256,6 +453,10 @@ def main():
         cmd_research(d, a.topic)
     elif a.task == "outline":
         cmd_outline(d)
+    elif a.task == "auto":
+        cmd_auto(d, a.rounds)
+    elif a.task == "fix":
+        cmd_fix(d, a.rounds)
     elif a.task == "chapter":
         if not a.target:
             ap.error("chapter 작업에는 파일명이 필요합니다 (예: ch-01.md)")

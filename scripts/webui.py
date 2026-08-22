@@ -231,7 +231,10 @@ function banner(){
   const [msg,n]=nextAction();
   return `<div class=card style="border-color:var(--brand);background:var(--brand-soft)">
     <div class=row><b>다음 할 일</b><span style="flex:1">${msg}</span>
-    <button onclick="go(${n})">${n}단계로</button></div></div>`;
+    <button onclick="go(${n})">${n}단계로</button>
+    <button class=primary onclick="agent('auto')">주제만 주고 전부 맡기기</button></div>
+    <p class=hint style="margin:8px 0 0">‘전부 맡기기’는 조사 → 목차 → 집필 → 빌드·검사·수정을
+      끝까지 돌립니다. 이미 채운 단계는 건너뜁니다.</p></div>`;
 }
 
 const PANEL={
@@ -254,6 +257,9 @@ const PANEL={
         <b>${esc(s[1])}</b><small>${esc(s[2])}</small></div>`).join('')}</div>
    <div class=row style="margin-top:14px"><button class=primary onclick=create()>만들기</button>
      <span class=muted>만들면 2단계(자료)로 넘어갑니다</span></div>
+   <p class=hint style="margin-top:12px">책을 만든 뒤 2단계에 자료를 넣고, 어느 단계에서든
+     <b>“주제만 주고 전부 맡기기”</b>를 누르면 조사·목차·집필·검사 통과까지 한 번에 갑니다.
+     7장 기준 15~25분 걸립니다.</p>
  </div>`,
  2:()=>`<div class=card>
    <h2>자료 넣기</h2>
@@ -320,7 +326,10 @@ const PANEL={
        ${state.steps.built?'':'disabled title="먼저 빌드하세요"'} onclick="run('qc')">② 게이트</button>
      <button ${state.steps.built?'':'disabled title="먼저 빌드하세요"'}
        onclick="run('sheet')">③ 지면 이미지 만들기</button>
+     <button onclick="agent('fix')">AI에게 게이트 통과까지 맡기기</button>
    </div>
+   <p class=hint style="margin-top:8px">마지막 버튼은 빌드 → 검사 → 실패한 장의 분량 조절을
+     통과할 때까지 반복합니다(최대 6회차). 장 하나 고칠 때마다 1분 안팎 걸립니다.</p>
    <table style="margin-top:12px"><tr><th style="width:22%">버튼</th><th>무엇이 생기나</th></tr>
      <tr><td>① 빌드</td><td><code>draft/book.pdf</code> — 아직 검사 전 원고 PDF</td></tr>
      <tr><td>② 게이트</td><td>검사 통과 시에만 <code>final/책이름.pdf</code>. 실패하면 아래 표에 이유가 뜹니다</td></tr>
@@ -447,7 +456,7 @@ def start_job(name: str, task: str, target: str | None):
     if JOB["running"]:
         raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
     d = book_dir(name)
-    if task not in ("research", "outline", "chapter", "all"):
+    if task not in ("research", "outline", "chapter", "all", "fix", "auto"):
         raise ValueError("unknown task")
     argv = [sys.executable, str(SKILL / "scripts/agent.py"), task, str(d)]
     if task == "chapter":
