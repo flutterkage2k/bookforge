@@ -269,9 +269,15 @@ function render(){
     return `<button class="step ${n===step?'on':''} ${done?'done':''}" onclick="go(${n})">
       <b>${n}. ${s[0]}</b><small>${s[1]}</small></button>`;
   }).join('');
+  // 다시 그리기 전에 입력값을 담아 두고, 그린 뒤 되돌린다(폴더 이름·제목·책 정보 유실 방지)
+  const keep = {};
+  document.querySelectorAll('#panel input').forEach(el=>{ if(el.id) keep[el.id]=el.value; });
   $('panel').innerHTML = (!state && step!==1)
     ? cardMsg('왼쪽에서 책을 고르거나 새로 만드세요.')
     : ((state && step!==1 ? banner() : '') + PANEL[step]());
+  document.querySelectorAll('#panel input').forEach(el=>{
+    if(el.id && keep[el.id] !== undefined && el.value === '') el.value = keep[el.id];
+  });
   if(step===4) loadChapter();
   if(step===2) loadFile('research.md','ta2');
 }
@@ -548,7 +554,15 @@ function collectOutline(){
 }
 function addRow(){ state.outline=collectOutline(); state.outline.push({title:'',summary:'',toc_line:''}); render(); }
 function delRow(i){ state.outline=collectOutline(); state.outline.splice(i,1); render(); }
-function pickStyle(s){ newStyle=s; render(); }
+function pickStyle(s){
+  // 화면을 다시 그리면 입력 중이던 폴더 이름·제목이 지워진다(실측: 스타일을 고르면 폼이 빔).
+  newStyle=s;
+  document.querySelectorAll('.styles button').forEach((b,i)=>{
+    const on = STYLES[i][0]===s;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+  });
+}
 function pickChap(c){ chap=c; render(); }   // 편집 내용은 drafts에 남으니 경고가 필요 없다
 
 // 편집 중인 내용은 DOM이 아니라 여기 남는다 — render()가 innerHTML을 통째로 갈아끼우므로
@@ -948,9 +962,12 @@ def run_script(name: str, cmd: str) -> dict:
 
 
 def scaffold(data: dict) -> dict:
-    name = data.get("name")
-    if not NAME_RE.fullmatch(name or ""):
-        raise ValueError("폴더 이름은 영문·숫자·-·_ 만 됩니다")
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("폴더 이름을 입력하세요 (제목이 아니라 파일용 영문 이름입니다)")
+    if not NAME_RE.fullmatch(name):
+        raise ValueError(f"폴더 이름 '{name}'은 쓸 수 없습니다 — 영문·숫자·-·_ 만 됩니다"
+                         " (제목에는 한글·일본어를 자유롭게 쓰세요)")
     if data.get("style") not in STYLES:
         raise ValueError("bad style")
     length = data.get("length") or "short"
