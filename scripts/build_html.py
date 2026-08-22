@@ -263,6 +263,15 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
                 f'<span class="toc-leader"></span>'
                 f'<span class="tocpg" data-mk="{mk}s{sidx:02d}">00</span></li>')
 
+    # 판권면 서체 표기 — 사용자가 고른 서체는 라이선스 조건이 제각각이라 책에 남긴다
+    fonts = book.get("fonts") or {}
+    label = {"ko": "한국어", "ja": "일본어", "en": "영문"}
+    fontline = ""
+    if fonts:
+        names = " · ".join(f'{label[k]} {fonts[k]["family"]}' for k in ("ko", "ja", "en")
+                           if k in fonts)
+        fontline = (f'<p>지정 서체 — {names}<br>'
+                    '지정 서체의 사용·배포 조건은 각 서체의 라이선스를 따릅니다.</p>')
     html = tpl.substitute(
         title=book.get("title", ""), subtitle=book.get("subtitle") or "",
         author=book.get("author", "bookforge"), date=book.get("date", ""),
@@ -273,6 +282,7 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
         backquote=book.get("backquote") or first_pull or book.get("subtitle") or "",
         body="\n".join(sections),
         css=css,
+        fontline=fontline,
     )
     page1 = ts / "book.html"
     page1.write_text(html, encoding="utf-8")

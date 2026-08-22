@@ -130,6 +130,8 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  .chaps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
  .chaps button.on{border-color:var(--brand);color:var(--brand);font-weight:600}
  .muted{color:var(--mute);font-size:13px}
+ .warnbox{margin:10px 0 0;padding:9px 10px;border:1px solid #f0b4ae;background:var(--bad-soft);
+   color:var(--bad);border-radius:8px;font-size:12px;line-height:1.5}
  code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:13px}
 </style>
 <header>
@@ -162,11 +164,16 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
     </select>
     <select id=ffam style="margin-top:6px"><option>—</option></select>
     <div class=row style="margin-top:6px">
-      <button style="flex:1" onclick=setFont()>이 책에 지정</button>
-      <button style="flex:1" onclick=clearFont()>해제</button>
+      <button style="flex:1" onclick=setFont()>적용</button>
+      <button style="flex:1" onclick=clearFont()>되돌리기</button>
     </div>
-    <button style="width:100%;margin-top:6px" onclick=saveDefaults()>기본 폰트로 저장</button>
+    <button style="width:100%;margin-top:6px" onclick=saveDefaults()>새 책 기본값으로</button>
     <p class=hint id=deffonts style="margin:6px 0 0">기본값 없음</p>
+    <p class=warnbox>⚠ 배포 전 라이선스를 확인하세요.<br>
+      PDF에는 쓴 서체가 <b>파일로 박혀</b> 나갑니다. 개인 열람은 괜찮아도 판매·인쇄물 배포에는
+      별도 라이선스가 필요한 서체가 많고, 위반 시 금전적 책임이 따릅니다.<br>
+      동봉 서체(Pretendard·Noto Serif KR·Paperlogy·Gmarket Sans·Barlow)는 OFL이라 상업 배포도
+      가능합니다. 직접 고른 서체는 <b>본인이 확인</b>해야 합니다.</p>
   </div>
  </aside>
  <main>
@@ -538,7 +545,9 @@ async function saveDefaults(){
 async function setFont(){
   if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
   const r=await api('/api/font',{name:book,lang:$('flang').value,family:$('ffam').value});
-  $('log').textContent=r.out||r.error; open_(book);
+  $('log').textContent=(r.out||r.error)
+    + '\n\n⚠ 이 서체는 PDF에 파일로 박혀 배포됩니다. 판매·인쇄 배포 전에 라이선스를 확인하세요.';
+  open_(book);
 }
 async function clearFont(){
   if(!book) return;

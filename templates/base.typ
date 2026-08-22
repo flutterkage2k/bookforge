@@ -43,6 +43,16 @@
 // (show rule로 fill을 덮어써도 하이라이터 색이 이긴다 — 테마 교체가 유일한 해법.)
 #let code-theme = "code-theme.tmTheme"
 
+// 폰트 스택의 대표 서체 — covers(문자 한정) 항목은 라틴·숫자 전용이라 대표가 아니다.
+// 사용자가 언어별 서체를 지정하면 그것이 스택 앞에 오므로 첫 '한정 없는' 항목을 고른다.
+#let main-face(stack) = {
+  let s = if type(stack) == array { stack } else { (stack,) }
+  let plain = s.filter(e => type(e) == str)
+  if plain.len() > 0 { plain.first() }
+  else if s.len() > 0 and type(s.first()) == dictionary { s.first().at("name", default: "?") }
+  else { "?" }
+}
+
 #let merged(tokens) = {
   let t = default-tokens
   for (k, v) in tokens { t.insert(k, v) }
@@ -222,9 +232,24 @@
     linebreak()
     if "date" in meta [초판 1쇄 발행 #meta.date]
     linebreak()
-    [펴낸곳 bookforge · 조판 bookforge 자동 조판 파이프라인]
+    [펴낸곳 #meta.at("publisher", default: "bookforge") · 조판 bookforge 자동 조판 파이프라인]
     linebreak()
-    [본문 서체 #merged((:)).body-font.at(0) · 표제 서체 #merged((:)).display-font.at(0)]
+    // 실제로 쓰인 서체를 적는다. 종전에는 default-tokens를 읽어 스타일·사용자 지정과
+    // 무관하게 늘 "Pretendard"가 찍혔다(판권면이 사실과 달라지는 결함).
+    [본문 서체 #main-face(t.body-font) · 표제 서체 #main-face(t.display-font)]
+    let uf = meta.at("fonts", default: (:))
+    if type(uf) == dictionary and uf.len() > 0 {
+      linebreak()
+      let label = (ko: "한국어", ja: "일본어", en: "영문")
+      let names = ()
+      for k in ("ko", "ja", "en") {
+        if k in uf { names.push(label.at(k) + " " + uf.at(k).at("family", default: "?")) }
+      }
+      [지정 서체 — #names.join(" · ")]
+      linebreak()
+      // 동봉 서체는 OFL이지만 사용자가 고른 서체는 조건이 제각각이다 — 배포 전 확인 대상임을 남긴다.
+      [지정 서체의 사용·배포 조건은 각 서체의 라이선스를 따릅니다.]
+    }
     linebreak()
     [이 책의 내용은 조사 시점 기준이며, 인용·수치는 본문 표기 출처를 따릅니다.]
   })
