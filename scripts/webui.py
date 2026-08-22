@@ -162,9 +162,11 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
     </select>
     <select id=ffam style="margin-top:6px"><option>—</option></select>
     <div class=row style="margin-top:6px">
-      <button style="flex:1" onclick=setFont()>지정</button>
+      <button style="flex:1" onclick=setFont()>이 책에 지정</button>
       <button style="flex:1" onclick=clearFont()>해제</button>
     </div>
+    <button style="width:100%;margin-top:6px" onclick=saveDefaults()>기본 폰트로 저장</button>
+    <p class=hint id=deffonts style="margin:6px 0 0">기본값 없음</p>
   </div>
  </aside>
  <main>
@@ -209,7 +211,7 @@ async function open_(n){
   $('curfonts').textContent=Object.keys(state.fonts||{}).length
     ? Object.entries(state.fonts).map(([k,v])=>`${k}: ${v}`).join(' · ') : '동봉 폰트';
   if(!chap || !state.chapters.includes(chap)) chap=state.chapters[0]||null;
-  await boot();
+  await boot(); loadFonts();
   if(step===1) step=nextStep();
   render();
 }
@@ -509,10 +511,29 @@ async function poll(){
   tick();
 }
 async function loadFonts(){
-  const d=await api('/api/fonts?lang='+$('flang').value);
+  const lang=$('flang').value;
+  const d=await api('/api/fonts?lang='+lang);
   $('ffam').innerHTML=(d.fonts||[]).map(f=>
     `<option value="${esc(f.family)}">${esc(f.family)} (${f.format})</option>`).join('')
     || '<option value="">쓸 수 있는 폰트 없음</option>';
+  // 지금 책(없으면 기본값)에 지정된 폰트를 드롭다운에 되살린다 —
+  // 이게 없으면 재시작 때마다 설정이 날아간 것처럼 보인다
+  const cur=(state&&state.fonts&&state.fonts[lang]) || (defaults[lang]||'');
+  if(cur) $('ffam').value=cur;
+}
+let defaults={};
+async function loadDefaults(){
+  const s=await api('/api/settings');
+  defaults=(s&&s.default_fonts)||{};
+  const txt=Object.entries(defaults).map(([k,v])=>`${k}: ${v}`).join(' · ');
+  $('deffonts').textContent = txt ? ('새 책 기본값 — '+txt) : '기본값 없음 (새 책은 동봉 폰트)';
+}
+async function saveDefaults(){
+  const d={...defaults, [$('flang').value]: $('ffam').value};
+  const r=await api('/api/settings',{default_fonts:d});
+  if(r.error){ $('log').textContent=r.error; return; }
+  await loadDefaults();
+  $('log').textContent='기본 폰트 저장 — 앞으로 만드는 책에 자동으로 적용됩니다';
 }
 async function setFont(){
   if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
@@ -524,7 +545,7 @@ async function clearFont(){
   const r=await api('/api/font',{name:book,clear:true});
   $('log').textContent=r.out||r.error; open_(book);
 }
-boot(); render(); loadFonts();
+boot(); render(); loadDefaults().then(loadFonts);
 api('/api/job').then(j=>{ if(j.running) poll(); });
 </script>
 """
@@ -572,6 +593,30 @@ def _font_cache() -> dict:
     if not _FONTS:
         _FONTS.update(fontpick.scan())
     return _FONTS
+
+
+def settings_path() -> Path:
+    return books_root() / ".bookforge.json"
+
+
+def load_settings() -> dict:
+    p = settings_path()
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_settings(data: dict) -> dict:
+    """새 책에 물려줄 기본값 — 폰트를 매번 다시 고르지 않게 앱 수준에 한 번만 저장한다."""
+    cur = load_settings()
+    fonts = {k: v for k, v in (data.get("default_fonts") or {}).items()
+             if k in fontpick.SAMPLES and isinstance(v, str) and v.strip()}
+    cur["default_fonts"] = fonts
+    settings_path().write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
+    return cur
 
 
 def books_root() -> Path:
@@ -745,7 +790,15 @@ def scaffold(data: dict) -> dict:
     if (data.get("author") or "").strip():
         argv += ["--author", data["author"].strip()]
     p = subprocess.run(argv, capture_output=True, text=True, timeout=120)
-    return {"out": (p.stdout + p.stderr).strip(), "code": p.returncode}
+    out = (p.stdout + p.stderr).strip()
+    if p.returncode == 0:
+        # 기본 폰트 물려주기 — 실패해도 책 생성 자체는 살린다(스타일에 따라 거부될 수 있다)
+        for lang, family in (load_settings().get("default_fonts") or {}).items():
+            r = subprocess.run([sys.executable, str(SKILL / "scripts/fontpick.py"), "set",
+                                str(books_root() / name), f"--{lang}", family],
+                               capture_output=True, text=True, timeout=300)
+            out += "\n" + (r.stdout + r.stderr).strip().splitlines()[-1]
+    return {"out": out, "code": p.returncode}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -795,6 +848,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 page = (PAGE.replace("%STYLES%", json.dumps(styles, ensure_ascii=False))
                             .replace("%LENGTHS%", json.dumps(LENGTHS, ensure_ascii=False)))
                 return self._send(200, "text/html; charset=utf-8", page.encode())
+            if u.path == "/api/settings":
+                return self._json(load_settings())
             if u.path == "/api/books":
                 names = sorted(p.parent.name for p in books_root().glob("*/book.json"))
                 return self._json({"books": names})
@@ -854,6 +909,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/file":
                 safe_file(data["name"], data["path"]).write_text(data["text"])
                 return self._json({"ok": True})
+            if u.path == "/api/settings":
+                return self._json(save_settings(data))
             if u.path == "/api/meta":
                 d = book_dir(data["name"])
                 book = json.loads((d / "book.json").read_text())
