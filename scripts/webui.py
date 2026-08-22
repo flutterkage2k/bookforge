@@ -143,7 +143,7 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
   <div class=card>
     <h2>책</h2>
     <div class=booklist id=books></div>
-    <button class=primary style="width:100%;margin-top:10px" onclick="go(1)">+ 새 책 만들기</button>
+    <button class=primary style="width:100%;margin-top:10px" onclick="newBook()">+ 새 책 만들기</button>
   </div>
   <div class=card>
     <h2>조사 설정</h2>
@@ -222,6 +222,15 @@ function nextStep(){
   return 6;
 }
 function go(n){ step=n; render(); }
+function newBook(){
+  // 선택을 비우지 않으면 1단계에 이전 책의 '책 정보'가 남아 새 책을 만드는 화면처럼 안 보인다
+  book=null; state=null; chap=null; step=1;
+  $('hbook').textContent='— 책을 고르거나 새로 만드세요';
+  $('hstate').className='pill idle'; $('hstate').textContent='대기';
+  $('pdflink').style.display='none';
+  $('curfonts').textContent='동봉 폰트';
+  boot(); render();
+}
 function render(){
   $('steps').innerHTML=STEPS.map((s,i)=>{
     const n=i+1, done=state&&stepDone(n);
@@ -262,7 +271,7 @@ function banner(){
 
 const PANEL={
  1:()=>(state?metaForm():'')+`<div class=card>
-   <h2>새 책 만들기</h2>
+   <h2>새 책 만들기${state?' (다른 책을 새로 만듭니다)':''}</h2>
    <p class=hint>폴더 이름은 영문·숫자만. 제목·저자는 나중에 바꿔도 됩니다.</p>
    <div class=row>
      <div style="flex:1"><label>폴더 이름</label><input id=nname placeholder="mybook"></div>
