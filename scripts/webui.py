@@ -132,6 +132,15 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
     <button class=primary style="width:100%;margin-top:10px" onclick="go(1)">+ 새 책 만들기</button>
   </div>
   <div class=card>
+    <h2>조사 설정</h2>
+    <label style="display:flex;gap:8px;align-items:center;margin:0">
+      <input type=checkbox id=useweb style="width:auto"> 웹으로 사실 확인</label>
+    <p class=hint style="margin:6px 0 0">켜면 변하는 사실(가격·버전·정책·통계)만 골라
+      검색합니다. 개념 설명은 검색하지 않습니다.</p>
+    <label>검색 상한(질문 수)</label>
+    <input id=maxq type=number value=6 min=1 max=12>
+  </div>
+  <div class=card>
     <h2>폰트</h2>
     <p class=hint id=curfonts>동봉 폰트</p>
     <select id=flang onchange=loadFonts()>
@@ -407,7 +416,8 @@ async function run(cmd){
 }
 async function agent(task,target){
   if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
-  const r=await api('/api/agent',{name:book,task,target});
+  const r=await api('/api/agent',{name:book,task,target,
+    web:$('useweb').checked, max_queries:+$('maxq').value||6});
   if(r.error){ $('log').textContent=r.error; return; }
   $('log').textContent='AI 작업 시작 — 창을 닫지 마세요…';
   poll();
@@ -450,7 +460,8 @@ _FONTS = {}
 JOB = {"running": False, "name": "", "task": "", "log": "", "done": True}
 
 
-def start_job(name: str, task: str, target: str | None):
+def start_job(name: str, task: str, target: str | None,
+              web: bool = False, max_queries: int = 6):
     """agent.py를 별도 스레드에서 돌린다. 서버는 응답을 막지 않는다."""
     import threading
     if JOB["running"]:
@@ -459,6 +470,10 @@ def start_job(name: str, task: str, target: str | None):
     if task not in ("research", "outline", "chapter", "all", "fix", "auto"):
         raise ValueError("unknown task")
     argv = [sys.executable, str(SKILL / "scripts/agent.py"), task, str(d)]
+    if web and task in ("research", "auto"):
+        import datetime
+        argv += ["--web", "--max-queries", str(max(1, min(12, int(max_queries)))),
+                 "--today", datetime.date.today().isoformat()]
     if task == "chapter":
         if not CHAPTER_RE.match((target or "").replace("chapters/", "")):
             raise ValueError("bad chapter file")
@@ -701,7 +716,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/run":
                 return self._json(run_script(data["name"], data["cmd"]))
             if u.path == "/api/agent":
-                return self._json(start_job(data["name"], data["task"], data.get("target")))
+                return self._json(start_job(data["name"], data["task"], data.get("target"),
+                                            bool(data.get("web")), data.get("max_queries") or 6))
             if u.path == "/api/new":
                 return self._json(scaffold(data))
             if u.path == "/api/font":

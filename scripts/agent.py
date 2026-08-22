@@ -63,14 +63,19 @@ def die(msg: str):
     sys.exit(1)
 
 
-def claude(prompt: str, timeout: int = 900) -> str:
-    """헤드리스 claude 호출. 도구 없이 텍스트만 받는다."""
+MODEL = "sonnet"  # 조사·집필·수정 모두 sonnet으로 충분하다(--model로 교체 가능)
+
+
+def claude(prompt: str, timeout: int = 900, tools: str | None = None) -> str:
+    """헤드리스 claude 호출. tools를 주지 않으면 도구 없이 텍스트만 받는다."""
     exe = shutil.which("claude")
     if not exe:
         die("`claude` 명령을 찾지 못했습니다. Claude Code를 설치하면 자동 집필이 켜집니다.")
+    argv = [exe, "-p", prompt, "--output-format", "text", "--model", MODEL]
+    if tools:
+        argv += ["--allowed-tools", tools]
     try:
-        p = subprocess.run([exe, "-p", prompt, "--output-format", "text"],
-                           capture_output=True, text=True, timeout=timeout, cwd=str(SKILL))
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=str(SKILL))
     except subprocess.TimeoutExpired:
         die(f"claude 응답이 {timeout}초를 넘었습니다.")
     if p.returncode != 0:
@@ -109,9 +114,12 @@ def as_chapter(text: str) -> str | None:
     return None
 
 
-def cmd_research(book_dir: Path, topic: str | None):
+def cmd_research(book_dir: Path, topic: str | None, web: bool = False,
+                 max_queries: int = 6, today: str = ""):
     book, style, _ = load(book_dir)
     subject = topic or book.get("title") or book_dir.name
+    if web:
+        return _research_web(book_dir, subject, max_queries, today)
     prompt = f"""주제 「{subject}」로 한국어 단행본을 쓰기 위한 조사 노트를 작성한다.
 
 너의 지식만으로 쓴다. 확실하지 않은 것은 쓰지 말고, 애매하면 "확인 필요"로 표시한다.
@@ -131,6 +139,51 @@ def cmd_research(book_dir: Path, topic: str | None):
     merged = (prev + "\n\n---\n\n" + text).strip() if prev else text
     out.write_text(merged + "\n", encoding="utf-8")
     print(f"OK research: {out} ({len(merged)}자)")
+
+
+def _research_web(book_dir: Path, subject: str, max_queries: int, today: str):
+    """검색은 '지금 확인해야만 하는 것'에만 쓴다.
+
+    무작정 많이 긁으면 비용만 늘고 정확도는 안 오른다. 그래서 두 단계로 묶는다.
+    ① 검색 없이, 확인이 필요한 질문을 최대 N개 뽑는다(개념 설명은 질문에서 제외 —
+       그건 모델 지식으로 충분하고 시간이 지나도 안 변한다).
+    ② 질문 하나당 검색 한 번. 결과에서 답 문장만 취하고 출처 URL과 확인일을 붙인다.
+    상한은 질문 수 하나로 통제된다 — 검색 N회, 그 이상은 없다.
+    """
+    prompt = f"""주제 「{subject}」로 한국어 단행본을 쓰기 위한 조사 노트를 만든다.
+오늘 날짜는 {today}이다.
+
+작업 순서를 반드시 지켜라.
+
+1단계(검색 금지). 이 주제에서 **시간이 지나면 변하는 사실**만 골라 확인 질문을
+최대 {max_queries}개 만든다. 다음에 해당하는 것만 질문으로 삼는다:
+가격·요금·한도, 버전·릴리스, 정책·약관, 통계·점유율, 날짜·일정, 조직·제품명 변경.
+개념 정의·원리·역사처럼 변하지 않는 것은 질문으로 만들지 않는다(네 지식으로 쓴다).
+
+2단계. 질문 하나당 웹 검색을 **한 번씩만** 한다. 검색 횟수는 질문 수를 넘지 않는다.
+결과에서 답에 해당하는 문장만 취한다. 못 찾으면 "확인 실패"로 남기고 다음으로 넘어간다.
+
+3단계. 아래 형식의 마크다운만 출력한다(설명·인사말 금지, 2,500자 이내).
+
+## 확인된 사실
+- 사실 한 줄. (출처: URL, 확인 {today})
+
+## 개념 정리
+(검색 없이 네 지식으로 쓰는 부분. 정의·구조·원리)
+
+## 실제 사례
+
+## 자주 오해하는 지점
+
+## 확인 필요
+- 검색으로도 확정하지 못한 것. 저자가 직접 확인해야 하는 항목."""
+    text = strip_fence(claude(prompt, timeout=1800, tools="WebSearch"))
+    out = book_dir / "research.md"
+    prev = out.read_text(encoding="utf-8").strip() if out.exists() else ""
+    merged = (prev + "\n\n---\n\n" + text).strip() if prev else text
+    out.write_text(merged + "\n", encoding="utf-8")
+    n = text.count("출처:")
+    print(f"OK research(web): {out} ({len(merged)}자, 출처 표기 {n}건, 검색 상한 {max_queries}회)")
 
 
 def cmd_outline(book_dir: Path):
@@ -385,12 +438,13 @@ def cmd_fix(book_dir: Path, rounds: int):
     die(f"{rounds}회차까지 통과하지 못했습니다. 원고를 직접 손보세요.")
 
 
-def cmd_auto(book_dir: Path, rounds: int):
+def cmd_auto(book_dir: Path, rounds: int, web: bool = False,
+             max_queries: int = 6, today: str = ""):
     """주제만 있는 상태에서 통과본까지 — 조사 → 목차 → 집필 → (빌드·검사·수정) 반복."""
     rp = book_dir / "research.md"
     if not rp.exists() or len(rp.read_text(encoding="utf-8").strip()) < 40:
         print("[1/4] 조사 노트 작성")
-        cmd_research(book_dir, None)
+        cmd_research(book_dir, None, web, max_queries, today)
     else:
         print("[1/4] 자료가 이미 있어 조사는 건너뜁니다")
     if _outline_is_stub(book_dir):
@@ -434,13 +488,19 @@ def demo():
 
 
 def main():
+    global MODEL
     ap = argparse.ArgumentParser(description="목차·원고를 claude CLI에게 맡긴다")
     ap.add_argument("task", choices=["research", "outline", "chapter", "all", "fix", "auto", "selfcheck"])
     ap.add_argument("book_dir", nargs="?")
     ap.add_argument("target", nargs="?")
     ap.add_argument("--topic")
     ap.add_argument("--rounds", type=int, default=6)
+    ap.add_argument("--model", default=MODEL, help="claude 모델 (기본 sonnet)")
+    ap.add_argument("--web", action="store_true", help="조사 단계에서 웹 검색으로 사실 확인")
+    ap.add_argument("--max-queries", type=int, default=6, help="웹 검색 최대 횟수(=질문 수)")
+    ap.add_argument("--today", default="", help="확인일로 기록할 날짜 (YYYY-MM-DD)")
     a = ap.parse_args()
+    MODEL = a.model
     if a.task == "selfcheck":
         return demo()
     if not a.book_dir:
@@ -450,11 +510,11 @@ def main():
         die(f"책 폴더가 아닙니다: {d}")
     (d / "chapters").mkdir(exist_ok=True)
     if a.task == "research":
-        cmd_research(d, a.topic)
+        cmd_research(d, a.topic, a.web, a.max_queries, a.today)
     elif a.task == "outline":
         cmd_outline(d)
     elif a.task == "auto":
-        cmd_auto(d, a.rounds)
+        cmd_auto(d, a.rounds, a.web, a.max_queries, a.today)
     elif a.task == "fix":
         cmd_fix(d, a.rounds)
     elif a.task == "chapter":

@@ -40,7 +40,10 @@ def inline(tokens) -> str:
             out.append(esc(t.content))
         elif ty == "code_inline":
             content = t.content.replace("`", "\\`")
-            out.append(f"#raw(\"{content_escape(t.content)}\")")
+            # 세미콜론으로 코드 모드를 명시적으로 닫는다. 없으면 뒤에 바로 붙는 `(`가
+            # 함수 호출 인자로 읽혀 "the character `#` is not valid in code"로 빌드가 죽는다
+            # (실측: `#raw("a")(또는 #raw("b"))` 형태의 한국어 문장에서 재현).
+            out.append(f"#raw(\"{content_escape(t.content)}\");")
         elif ty == "strong_open":
             out.append("#strong[")
         elif ty == "strong_close":
@@ -289,7 +292,26 @@ def convert_chapter(md_path: Path, out_path: Path, title: str, summary: str | No
         parts.insert(1, f'#bf-chapter("{content_escape(title)}"{s})\n')
     out_path.write_text("\n".join(parts), encoding="utf-8")
 
+def demo():
+    """인라인 코드 회귀 점검 — 한 문단에 인라인 코드가 둘이고 그 뒤에 괄호가 붙으면
+    Typst가 코드 모드에서 빠져나오지 못해 빌드가 죽었다(실측: cloudflare 책 4장)."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "ch-01.md"
+        dst = Path(tmp) / "ch-01.typ"
+        src.write_text("# 제목\n\n프로젝트에는 `src/index.ts`(또는 `index.js`)가 있다.\n",
+                       encoding="utf-8")
+        convert_chapter(src, dst, "제목", None)
+        out = dst.read_text(encoding="utf-8")
+        assert '#raw("src/index.ts");' in out, out
+        assert '#raw("index.js");' in out, out
+    print("demo ok")
+
+
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--selfcheck"]:
+        demo()
+        raise SystemExit
     src, dst = Path(sys.argv[1]), Path(sys.argv[2])
     title = sys.argv[3] if len(sys.argv) > 3 else src.stem
     summary = sys.argv[4] if len(sys.argv) > 4 else None
