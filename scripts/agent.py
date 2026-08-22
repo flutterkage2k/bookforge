@@ -243,10 +243,9 @@ def cmd_outline(book_dir: Path):
     if not chapters:
         die("목차가 비었습니다.")
     rows, made = [], []
-    for i, c in enumerate(chapters, 1):
-        title = (c.get("title") or "").strip()
-        if not title:
-            continue
+    kept = [c for c in chapters if (c.get("title") or "").strip()]
+    for i, c in enumerate(kept, 1):   # 빈 제목을 건너뛰며 번호를 세면 ch-02가 빈다
+        title = c["title"].strip()
         f = f"ch-{i:02d}.md"
         rows.append({"file": f, "title": title,
                      "summary": (c.get("summary") or "").strip(),
@@ -255,6 +254,15 @@ def cmd_outline(book_dir: Path):
         if not p.exists():
             p.write_text(f"# {title}\n\n", encoding="utf-8")
             made.append(f)
+        else:
+            # 조판은 원고의 H1이 아니라 outline의 제목을 쓴다. 옛 본문 위에 새 제목만
+            # 갈아 끼우면 게이트도 통과하는 '조용히 틀린 책'이 된다 — 옛 원고를 밀어낸다.
+            first = p.read_text(encoding="utf-8").lstrip().split("\n", 1)[0]
+            if first.startswith("# ") and first[2:].strip() != title:
+                bak = p.with_suffix(".md.bak")
+                p.rename(bak)
+                p.write_text(f"# {title}\n\n", encoding="utf-8")
+                made.append(f"{f} (옛 원고는 {bak.name})")
     (book_dir / "outline.json").write_text(
         json.dumps({"chapters": rows}, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"OK outline: {len(rows)}장" + (f" · 새 원고 {len(made)}개" if made else ""))
@@ -338,7 +346,7 @@ def _chapter_of(page: int, starts: list) -> str | None:
     return cur
 
 
-def _fix_plan(book_dir: Path, style: str) -> list:
+def _fix_plan(book_dir: Path, style: str, fails: list) -> list:
     """gate-report + PDF 북마크 → [(파일명, 글자수 증감, 사유)] 계획.
 
     게이트는 '몇 행 모자라다'까지만 말한다. 그 행을 어느 장에서 만들지는
@@ -346,19 +354,36 @@ def _fix_plan(book_dir: Path, style: str) -> list:
     """
     import pymupdf
     report = json.loads((book_dir / "gate-report.json").read_text(encoding="utf-8"))
-    gates, metrics = report["gates"], report["metrics"]
+    gates, metrics = report["gates"], report.get("metrics") or {}
+    # G10·G0·G1 같은 렌더 전 게이트에서 떨어지면 metrics가 비어 있다 — 분량 조절 대상이 아니다.
+    if not metrics.get("pages"):
+        return []
+    # 게이트가 실제로 지목한 면만 손댄다. 종전에는 통과한 꼬리·사유 코드 승인 면까지
+    # 전부 계획에 넣어, "분량으로 못 고치는 실패"라는 안내에 영영 도달하지 못했다.
+    fail_pages = {int(n) for f in fails for n in re.findall(r"\bp(\d+)\b", f)}
+    doc_fail = any("G7-DOC" in f for f in fails)
     outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
     doc = pymupdf.open(book_dir / "draft" / "book.pdf")
-    titles = {c["title"]: c["file"] for c in outline}
-    starts = sorted((t[2], titles[t[1]]) for t in doc.get_toc() if t[0] == 1 and t[1] in titles)
+    # 제목→파일을 dict로 만들면 같은 제목이 두 번 나올 때 뒤 장이 앞 장을 덮어써,
+    # 앞 장의 문제로 뒤 장 원고를 고치게 된다. 등장 순서로 짝을 짓는다.
+    toc1 = [x for x in doc.get_toc() if x[0] == 1]
+    starts = []
+    if len(toc1) == len(outline):
+        starts = sorted((x[2], outline[i]["file"]) for i, x in enumerate(toc1))
+    else:  # 개수가 어긋나면 제목으로 맞추되 중복 제목은 포기한다
+        seen = [c["title"] for c in outline]
+        titles = {c["title"]: c["file"] for c in outline
+                  if seen.count(c["title"]) == 1}
+        starts = sorted((x[2], titles[x[1]]) for x in toc1 if x[1] in titles)
     doc.close()
     if not starts:
         die("PDF 북마크에서 장 시작 쪽을 찾지 못했습니다.")
-    cap = max((p["lines"] for p in metrics["pages"]), default=30)
+    # n_grid = 판면 높이 ÷ 행송 (본문 한 면 용량). 표지·목차 면이 섞인 최대 행수는 부풀어 있다.
+    cap = metrics.get("n_grid") or max((p["lines"] for p in metrics["pages"]), default=30)
     cpl = CHARS_PER_LINE.get(style, 33)
     plan = {}
 
-    def add(page, lines, why):
+    def add(page, lines, why, score):
         f = _chapter_of(page, starts)
         if not f:
             return
@@ -366,7 +391,7 @@ def _fix_plan(book_dir: Path, style: str) -> list:
         if f in plan:  # 같은 장에 요구가 겹치면 큰 쪽을 남긴다
             if abs(plan[f][0]) >= abs(delta):
                 return
-        plan[f] = (delta, why)
+        plan[f] = (delta, why, score)
 
     # 장별 본문 행수 — 흡수예산(pagination.md §4) 판정에 쓴다
     by_page = {p["page"]: p for p in metrics["pages"]}
@@ -377,6 +402,10 @@ def _fix_plan(book_dir: Path, style: str) -> list:
 
     for tail in gates.get("G7-TAIL", {}).get("tails", []):
         pg, reach, lines = tail["page"], tail["reach"], tail["lines"]
+        if tail.get("role"):
+            continue                      # 사람이 사유 코드로 승인한 여백은 건드리지 않는다
+        if pg not in fail_pages and not (doc_fail and reach < 0.8):
+            continue                      # 게이트가 지목하지 않은 면
         f = _chapter_of(pg, starts)
         span = bounds.get(f, (pg, pg))
         ch_lines = sum(by_page[p]["lines"] for p in range(span[0], span[1] + 1) if p in by_page)
@@ -384,29 +413,36 @@ def _fix_plan(book_dir: Path, style: str) -> list:
         # 그 밖이면 늘려서 채우되, 반 면 넘게 늘려야 하면 그것도 줄이는 쪽이 싸다(실측: 늘리기는 진동한다).
         need = (0.88 - reach) * cap
         if lines < 6 or lines <= 0.022 * ch_lines or need > 0.5 * cap:
-            add(pg, -(lines + 3), f"장 끝 면 {lines}행({reach:.2f}) — 앞 면으로 당겨 없앤다")
+            add(pg, -(lines + 3), f"장 끝 면 {lines}행({reach:.2f}) — 앞 면으로 당겨 없앤다", reach)
         elif reach < 0.75:
-            add(pg, need, f"장 끝 면 채움 {reach:.2f} — 0.88까지 올린다")
+            add(pg, need, f"장 끝 면 채움 {reach:.2f} — 0.88까지 올린다", reach)
     for u in gates.get("G7-MID", {}).get("underfull", []):
-        add(u["page"], (0.95 - u["reach"]) * cap, f"장 중간 면 {u['page']}이 {u['reach']:.2f}로 비어 있음")
+        if u["page"] not in fail_pages:
+            continue
+        add(u["page"], (0.95 - u["reach"]) * cap,
+            f"장 중간 면 {u['page']}이 {u['reach']:.2f}로 비어 있음", u["reach"])
     # 제목이 면 끝에 홀로 남은 경우 — 앞 문단을 조금 늘려 제목을 다음 면으로 밀어낸다
     for v in gates.get("G9", {}).get("violations", []):
         m = re.match(r"p(\d+):", v)
-        if m:
-            add(int(m.group(1)), 3, f"면 끝에 제목이 홀로 남음({v[:40]})")
+        if not m or int(m.group(1)) not in fail_pages:
+            continue
+        if "widow" in v:   # 제목 고립과 처방이 다르다 — 앞 문단 끝줄이 넘어간 경우
+            add(int(m.group(1)), -3, f"앞 문단 끝줄이 다음 면으로 넘어감({v[:40]})", 0.0)
+        else:
+            add(int(m.group(1)), 3, f"면 끝에 제목이 홀로 남음({v[:40]})", 0.0)
     out = []
-    for f, (d, why) in plan.items():
+    for f, (d, why, score) in plan.items():
         cur = len(safe_chapter(book_dir, f).read_text(encoding="utf-8"))
-        d = int(max(-0.3 * cur, min(0.3 * cur, d)))  # 한 회차에 ±30%까지만 — 3배로 부푸는 사고 방지
+        d = int(max(-0.4 * cur, min(0.4 * cur, d)))  # 한 회차에 ±40%까지 — 3배로 부푸는 사고 방지
         if abs(d) >= 30:
-            out.append((f, d, why))
+            out.append((f, d, why, score))
     return out
 
 
 def cmd_fix(book_dir: Path, rounds: int):
     """빌드 → 게이트 → 실패한 장 분량 조절을 통과할 때까지 반복한다."""
     book, style, _ = load(book_dir)
-    history: dict[str, int] = {}
+    history: dict[str, dict] = {}
     for r in range(1, rounds + 1):
         b = subprocess.run([sys.executable, str(SKILL / "scripts/build.py"), str(book_dir)],
                            capture_output=True, text=True, timeout=3600)
@@ -420,18 +456,25 @@ def cmd_fix(book_dir: Path, rounds: int):
             print(out.splitlines()[-1] if out else "")
             return
         fails = [l for l in out.splitlines() if l.startswith("FAIL")]
-        print(f"[{r}회차] 실패 {len(fails)}건: " + " / ".join(f[:60] for f in fails[:3]))
-        plan = _fix_plan(book_dir, style)
-        for i, (f, d, why) in enumerate(plan):
-            prev = history.get(f)
-            if prev is not None and (prev > 0) == (d > 0) and abs(prev) > 0:
-                # 같은 방향으로 또 밀라고 나왔다 = 지난 회차가 안 먹혔다는 뜻. 반대로,
-                # 그리고 절반 폭으로 간다(같은 폭으로 뒤집으면 두 상태를 오간다 — 실측).
-                flip = -abs(d) if d > 0 else abs(d)
-                plan[i] = (f, int(flip / 2) or flip, why + " (반대 방향으로 절반만)")
-            elif prev is not None and (prev > 0) != (d > 0):
-                # 방향이 바뀌었다 = 지난 조절이 지나쳤다. 폭을 줄여 수렴시킨다.
-                plan[i] = (f, int(d / 2) or d, why + " (지난 회차를 지나쳐 절반만)")
+        print(f"[{r}회차] 실패 {len(fails)}건: " + " / ".join(f[:60] for f in fails[:3]), flush=True)
+        plan = _fix_plan(book_dir, style, fails)
+        for i, (f, d, why, score) in enumerate(plan):
+            prev = history.get(f)   # {"req":지시, "act":실제 변화, "score":그때의 채움}
+            if not prev:
+                continue
+            applied = abs(prev["act"]) >= 0.5 * abs(prev["req"])
+            improved = score > prev["score"] + 0.02
+            if not applied:
+                # 지시가 반영되지 않았다 = 방향 문제가 아니라 폭이 안 먹혔다. 더 크게.
+                plan[i] = (f, int(d * 1.5), why + " (지난 회차가 반영되지 않아 폭을 키움)", score)
+            elif improved:
+                # 좋아지는 중이다 = 방향이 맞다. 계획대로 더 간다.
+                # (종전에는 '같은 방향이 또 나왔다'는 이유로 뒤집어서, 듣던 조치를 스스로 되돌렸다.)
+                plan[i] = (f, d, why + " (지난 회차가 효과 있어 같은 방향으로)", score)
+            else:
+                # 조치했는데 나빠졌거나 그대로다 = 그 방향은 아니다. 반대로, 폭은 절반.
+                back = -prev["act"] // 2 or -prev["act"]
+                plan[i] = (f, int(back), why + " (지난 조치가 듣지 않아 반대로 절반)", score)
         if not plan:
             codes = sorted({re.match(r"FAIL ([A-Z0-9-]+)", f).group(1)
                             for f in fails if re.match(r"FAIL ([A-Z0-9-]+)", f)})
@@ -441,7 +484,7 @@ def cmd_fix(book_dir: Path, rounds: int):
                 "G14-C(대비)·G2(폰트)는 원고가 아니라 스타일 설정 문제입니다.\n"
                 "G10(수치 날조)은 콜아웃의 숫자를 본문에도 넣거나 콜아웃에서 지우세요.")
         def fix_one(item):
-            f, delta, why = item
+            f, delta, why, score = item
             path = safe_chapter(book_dir, f)
             text = path.read_text(encoding="utf-8")
             verb = f"약 {delta}자 늘려" if delta > 0 else f"약 {abs(delta)}자 줄여"
@@ -461,9 +504,10 @@ def cmd_fix(book_dir: Path, rounds: int):
 --- 원고 끝 ---"""
             new = as_chapter(claude(prompt))
             if not new:
+                history.pop(f, None)   # 아무것도 안 했으니 지난 기록도 지운다
                 return f"  {f}: 응답에서 원고를 찾지 못해 건너뜀"
             path.write_text(new.rstrip() + "\n", encoding="utf-8")
-            history[f] = delta
+            history[f] = {"req": delta, "act": len(new) - len(text), "score": score}
             return f"  {f}: {len(text)}자 → {len(new)}자 ({why})"
 
         from concurrent.futures import ThreadPoolExecutor
@@ -605,8 +649,13 @@ def _insert_ref(book_dir: Path, fig: dict, name: str, allowed: set) -> bool:
     if ref in text:
         return True
     anchor = (fig.get("anchor") or "").strip()
-    if anchor and anchor in text:
-        text = text.replace(anchor, anchor + "\n\n" + ref, 1)
+    lines = text.split("\n")
+    # 줄 전체가 앵커와 같을 때만 그 뒤에 넣는다. 부분 문자열로 치환하면 문장 중간이나
+    # 표 셀 안에 이미지가 박혀 G0(이미지 문단에 텍스트 혼합)이 HARD FAIL 한다.
+    idx = next((i for i, ln in enumerate(lines) if ln.strip() == anchor), -1) if anchor else -1
+    if idx >= 0 and not lines[idx].lstrip().startswith(("|", "-", "*", ">", ":::")):
+        lines[idx + 1:idx + 1] = ["", ref]
+        text = "\n".join(lines)
     else:
         # 앵커를 못 찾으면 마지막 절 앞에 둔다 — 장 끝(요점 콜아웃)보다는 위여야 한다.
         i = text.rfind("\n## ")
@@ -652,6 +701,8 @@ def cmd_diagrams(book_dir: Path, limit: int):
                     _make_authored(book_dir, fig, name, width, vbmax, note)
             except ValueError as e:
                 print(f"  {name}: {e}")
+                for ext in (".json", ".svg"):   # 반쯤 만들어진 사이드카가 다음 빌드를 막는다
+                    (book_dir / "diagrams" / f"{name}{ext}").unlink(missing_ok=True)
                 break
             r = subprocess.run(["node", str(SKILL / "scripts/render_diagrams.mjs"),
                                 str(book_dir), "--style", style],
@@ -661,8 +712,22 @@ def cmd_diagrams(book_dir: Path, limit: int):
             if r.returncode == 0:
                 if _insert_ref(book_dir, fig, name, allowed_files):
                     made.append(f"{name} ({fig['file']}, {fig.get('track')}) — {fig['title']}")
+                else:   # 본문에 못 넣었으면 참조 없는 고아 도해가 남는다
+                    print(f"  {name}: 본문에 넣을 자리를 못 찾아 취소합니다")
+                    for ext in (".json", ".svg"):
+                        (book_dir / "diagrams" / f"{name}{ext}").unlink(missing_ok=True)
+                    (book_dir / "assets" / f"{name}.svg").unlink(missing_ok=True)
+                    (book_dir / "assets" / f"{name}.labels.json").unlink(missing_ok=True)
                 break
-            err = (r.stderr or r.stdout).strip().splitlines()[-1][:300]
+            out = (r.stderr or r.stdout).strip().splitlines()
+            err = out[-1][:300] if out else "렌더러가 아무 말 없이 실패했습니다"
+            # 렌더러는 diagrams/ 전체를 훑는다 — 실패한 게 남의 도해면 내 것을 지우면 안 된다.
+            m = re.search(r"(fig-\d+)", err)
+            if m and m.group(1) != name:
+                print(f"  {name}: 기존 도해 {m.group(1)}이 빌드를 막고 있습니다 — {err}")
+                for ext in (".json", ".svg"):
+                    (book_dir / "diagrams" / f"{name}{ext}").unlink(missing_ok=True)
+                break
             print(f"  {name}: 렌더 거부 — {err}")
             if attempt == 2:  # 두 번 실패하면 흔적을 지운다 (빌드를 막지 않도록)
                 for ext in (".json", ".svg"):

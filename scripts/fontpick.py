@@ -63,9 +63,12 @@ def _family(buf: bytes, tables: dict) -> str | None:
             continue
         raw = buf[o + str_off + so: o + str_off + so + ln]
         try:
-            txt = raw.decode("utf-16-be") if plat == 3 else raw.decode("mac-roman")
+            # platform 0(Unicode)도 UTF-16BE다. mac-roman으로 읽으면 이름에 NUL이 섞여
+            # 목록에 못 쓰는 이름이 뜨고 사용자가 그 폰트를 지정할 수 없게 된다(실측 36종).
+            txt = raw.decode("utf-16-be") if plat in (0, 3) else raw.decode("mac-roman")
         except Exception:
             continue
+        txt = txt.replace("\x00", "")
         txt = txt.strip()
         if txt:
             best.setdefault(nid, txt)
@@ -77,6 +80,13 @@ def _weight(buf: bytes, tables: dict) -> int:
         return 400
     o, _ = tables["OS/2"]
     return struct.unpack_from(">H", buf, o + 4)[0]
+
+
+def _italic(buf: bytes, tables: dict) -> bool:
+    if "OS/2" not in tables:
+        return False
+    o, _ = tables["OS/2"]
+    return bool(struct.unpack_from(">H", buf, o + 62)[0] & 0x0001)  # fsSelection bit0
 
 
 def _fstype(buf: bytes, tables: dict) -> int:
@@ -165,6 +175,7 @@ def scan_file(path: Path) -> dict | None:
             "path": str(path),
             "format": fmt,
             "weight": _weight(buf, tables),
+            "italic": _italic(buf, tables),
             "embeddable": not (_fstype(buf, tables) & 0x0002),
             "langs": [lg for lg, s in SAMPLES.items() if _cmap_chars(buf, tables, s)],
         }
@@ -184,17 +195,28 @@ def scan(dirs=None) -> dict:
             info = scan_file(p)
             if not info:
                 continue
+            if info.get("italic"):
+                continue   # 이탤릭은 @font-face에서 같은 weight의 정체를 밀어내 본문을 기울인다
             entry = {"path": info["path"], "weight": info["weight"], "format": info["format"]}
             cur = out.get(info["family"])
             rank = {"ttf": 0, "otf": 1, "ttc": 2}
             if cur is None:
                 info["files"] = [entry]
+                info["dirs"] = [str(Path(info["path"]).parent)]
                 out[info["family"]] = info
             else:
                 cur["files"].append(entry)
+                d = str(Path(info["path"]).parent)
+                if d not in cur["dirs"]:
+                    cur["dirs"].append(d)
+                # 언어 커버리지와 임베드 가능 여부는 가족 전체를 봐야 한다. 첫 파일이 서브셋이면
+                # 나머지가 한자를 가져도 가족째 거절됐고, 첫 파일만 임베드 가능하면 통과했다.
+                cur["langs"] = sorted(set(cur["langs"]) | set(info["langs"]))
+                cur["embeddable"] = cur["embeddable"] and info["embeddable"]
                 # 같은 가족이면 ttf > otf > ttc 순으로 대표를 고른다(HTML 트랙 호환 우선)
                 if rank[info["format"]] < rank[cur["format"]]:
-                    info["files"] = cur["files"]
+                    info["files"], info["dirs"] = cur["files"], cur["dirs"]
+                    info["langs"], info["embeddable"] = cur["langs"], cur["embeddable"]
                     out[info["family"]] = info
     return out
 
@@ -275,6 +297,7 @@ def cmd_set(args):
     for lang, fam in picks.items():
         f = validate(fonts, lang, fam, book.get("style"))
         chosen[lang] = {"family": f["family"], "dir": str(Path(f["path"]).parent),
+                        "dirs": f.get("dirs") or [str(Path(f["path"]).parent)],
                         "format": f["format"],
                         "files": sorted(f["files"], key=lambda x: x["weight"])}
         print(f"OK {lang}: {f['family']} ({f['format']}) {f['path']}")
@@ -292,6 +315,7 @@ def demo():
     assert pre["format"] == "ttf" and pre["embeddable"]
     assert "ko" in pre["langs"] and "en" in pre["langs"]
     assert "ja" not in pre["langs"], "Pretendard는 한자가 없어야 한다(폴백 계약의 근거)"
+    assert all("\x00" not in k for k in fonts), "이름에 NUL이 섞였다(platform 0 디코딩)"
     paper = next((f for k, f in fonts.items() if k.startswith("Paperlogy")), None)
     assert paper and "ja" in paper["langs"], "Paperlogy는 한자를 커버해야 한다"
     try:

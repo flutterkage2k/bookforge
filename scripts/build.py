@@ -103,9 +103,10 @@ def build_typst(book_dir: Path, book: dict, outline: dict, style_dir: Path):
     # --ignore-system-fonts는 그대로 둔다: 지정한 폴더만 열리고, 그 밖의 시스템 폰트로
     # 조용히 폴백하는 일은 계속 막힌다(폴백 사고가 재현 불가 산출물을 만든다).
     for spec in (book.get("fonts") or {}).values():
-        d = spec.get("dir")
-        if d and d not in cmd:
-            cmd += ["--font-path", d]
+        # 같은 가족의 굵기가 여러 폴더에 흩어져 있으면 한 폴더만 열어서는 볼드가 안 잡힌다
+        for d in (spec.get("dirs") or ([spec["dir"]] if spec.get("dir") else [])):
+            if d and d not in cmd:
+                cmd += ["--font-path", d]
     cmd += ["--ignore-system-fonts", str(ts / "main.typ"), str(out)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
