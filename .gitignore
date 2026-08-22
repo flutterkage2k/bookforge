@@ -8,3 +8,6 @@ node_modules/
 books/
 *.md.bak
 .bookforge.json
+
+# 개인 작업 기록 — 공개 대상 아님
+docs/session-logs/
