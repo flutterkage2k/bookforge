@@ -97,8 +97,15 @@ def build_typst(book_dir: Path, book: dict, outline: dict, style_dir: Path):
 
     out = book_dir / "draft" / "book.pdf"
     cmd = ["typst", "compile", "--root", str(book_dir),
-           "--font-path", str(FONTS), "--ignore-system-fonts",
-           str(ts / "main.typ"), str(out)]
+           "--font-path", str(FONTS)]
+    # book.json "fonts" — 사용자가 고른 폰트의 폴더를 검색 경로에 더한다.
+    # --ignore-system-fonts는 그대로 둔다: 지정한 폴더만 열리고, 그 밖의 시스템 폰트로
+    # 조용히 폴백하는 일은 계속 막힌다(폴백 사고가 재현 불가 산출물을 만든다).
+    for spec in (book.get("fonts") or {}).values():
+        d = spec.get("dir")
+        if d and d not in cmd:
+            cmd += ["--font-path", d]
+    cmd += ["--ignore-system-fonts", str(ts / "main.typ"), str(out)]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         die("typst compile:\n" + r.stderr)

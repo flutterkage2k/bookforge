@@ -18,9 +18,12 @@ import urllib.parse
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fontpick  # noqa: E402
+from styles_ko import STYLES as STYLE_KO  # noqa: E402
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CHAPTER_RE = re.compile(r"^ch-[0-9]{2,3}\.md$")
-STYLES = ["practical", "insight", "academic", "essay", "business", "magazine"]
+STYLES = list(STYLE_KO)
 ROOT = Path("books")
 
 PAGE = """<!doctype html><meta charset=utf-8><title>bookforge</title>
@@ -42,13 +45,23 @@ PAGE = """<!doctype html><meta charset=utf-8><title>bookforge</title>
  h4{margin:14px 0 4px;font-size:12px;color:#666;letter-spacing:.05em}
 </style>
 <div id=side>
-  <h4>BOOKS</h4><div id=books></div>
-  <h4>NEW</h4>
-  <input id=nname placeholder="폴더명(영문)" style="width:100%">
+  <h4>책 목록</h4><div id=books></div>
+  <h4>새 책 만들기</h4>
+  <input id=nname placeholder="폴더 이름(영문)" style="width:100%">
   <input id=ntitle placeholder="제목" style="width:100%;margin-top:4px">
   <select id=nstyle style="width:100%;margin-top:4px"></select>
   <button style="margin-top:6px;width:100%" onclick=create()>스캐폴드</button>
-  <h4>FILES</h4><div id=files></div>
+  <h4>폰트 (언어별)</h4>
+  <div style="font-size:12px;color:#666" id=curfonts>—</div>
+  <select id=flang style="width:100%;margin-top:4px">
+    <option value=ko>한국어</option><option value=ja>일본어</option><option value=en>영문·숫자</option>
+  </select>
+  <select id=ffam style="width:100%;margin-top:4px"><option>불러오는 중…</option></select>
+  <div style="display:flex;gap:4px;margin-top:4px">
+    <button style="flex:1" onclick=setFont()>지정</button>
+    <button style="flex:1" onclick=clearFont()>해제</button>
+  </div>
+  <h4>파일</h4><div id=files></div>
 </div>
 <div id=main>
   <div id=bar>
@@ -73,7 +86,7 @@ PAGE = """<!doctype html><meta charset=utf-8><title>bookforge</title>
 <script>
 let book=null, file=null;
 const $=i=>document.getElementById(i);
-$('nstyle').innerHTML=%STYLES%.map(s=>`<option>${s}</option>`).join('');
+$('nstyle').innerHTML=%STYLES%.map(s=>`<option value="${s[0]}">${s[1]}</option>`).join('');
 const api=(u,d)=>fetch(u,d&&{method:'POST',body:JSON.stringify(d)}).then(r=>r.json());
 async function boot(){
   const b=await api('/api/books');
@@ -84,6 +97,8 @@ async function open_(n){
   const d=await api('/api/book?name='+n);
   $('files').innerHTML=d.files.map(f=>`<a class=f onclick="load('${f}')">${f}</a>`).join('');
   $('pdflink').href='/pdf?name='+n+'&t='+Date.now();
+  $('curfonts').textContent=d.fonts && Object.keys(d.fonts).length
+    ? Object.entries(d.fonts).map(([k,v])=>`${k}: ${v}`).join(' · ') : '동봉 폰트 사용 중';
   $('gates').textContent=d.gates?(d.gates.pass?'게이트 PASS':'게이트 FAIL')+' · '+d.gates.pages+'쪽':'미빌드';
   $('shots').innerHTML=d.shots.map(s=>`<img src="/qc?name=${n}&page=${s}&t=${Date.now()}" style="width:100%;margin-bottom:8px;box-shadow:0 1px 4px #0003">`).join('')||'<i>시각검수를 눌러 페이지 이미지를 만드세요</i>';
   load(d.files.find(f=>f.startsWith('chapters/'))||d.files[0]);
@@ -98,6 +113,24 @@ async function save(){
   const r=await api('/api/file',{name:book,path:file,text:$('ta').value});
   $('stat').textContent=r.ok?'저장됨':'실패: '+r.error;
 }
+async function loadFonts(){
+  const lang=$('flang').value;
+  $('ffam').innerHTML='<option>불러오는 중…</option>';
+  const d=await api('/api/fonts?lang='+lang);
+  $('ffam').innerHTML=d.fonts.map(f=>`<option value="${f.family}">${f.family} (${f.format})</option>`).join('')
+    || '<option value="">쓸 수 있는 폰트 없음</option>';
+}
+$('flang').onchange=loadFonts;
+async function setFont(){
+  if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
+  const r=await api('/api/font',{name:book,lang:$('flang').value,family:$('ffam').value});
+  $('log').textContent=r.out||r.error; open_(book);
+}
+async function clearFont(){
+  if(!book) return;
+  const r=await api('/api/font',{name:book,clear:true});
+  $('log').textContent=r.out||r.error; open_(book);
+}
 async function create(){
   const r=await api('/api/new',{name:$('nname').value,title:$('ntitle').value,style:$('nstyle').value});
   $('log').textContent=r.out||r.error;
@@ -109,9 +142,19 @@ async function run(cmd){
   $('log').textContent=r.out||r.error;
   open_(book);
 }
-boot();
+boot(); loadFonts();
 </script>
 """
+
+
+_FONTS = {}
+
+
+def _font_cache() -> dict:
+    """폰트 스캔은 수백 개 파일을 읽는다 — 프로세스 수명 동안 한 번만."""
+    if not _FONTS:
+        _FONTS.update(fontpick.scan())
+    return _FONTS
 
 
 def books_root() -> Path:
@@ -148,7 +191,9 @@ def listing(name: str) -> dict:
     if report.exists():
         g = json.loads(report.read_text())
         gates = {"pass": g.get("pass"), "pages": g.get("gates", {}).get("G1", {}).get("pages")}
-    return {"files": files, "gates": gates, "shots": shots}
+    book = json.loads((d / "book.json").read_text())
+    fonts = {k: v["family"] for k, v in (book.get("fonts") or {}).items()}
+    return {"files": files, "gates": gates, "shots": shots, "fonts": fonts}
 
 
 def run_script(name: str, cmd: str) -> dict:
@@ -196,7 +241,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         one = lambda k: (q.get(k) or [""])[0]
         try:
             if u.path == "/":
-                page = PAGE.replace("%STYLES%", json.dumps(STYLES))
+                pairs = [[k, f"{ko} ({k})"] for k, (ko, _) in STYLE_KO.items()]
+                page = PAGE.replace("%STYLES%", json.dumps(pairs, ensure_ascii=False))
                 return self._send(200, "text/html; charset=utf-8", page.encode())
             if u.path == "/api/books":
                 names = sorted(p.parent.name for p in books_root().glob("*/book.json"))
@@ -205,6 +251,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(listing(one("name")))
             if u.path == "/api/file":
                 return self._json({"text": safe_file(one("name"), one("path")).read_text()})
+            if u.path == "/api/fonts":
+                lang = one("lang") or "ko"
+                if lang not in fontpick.SAMPLES:
+                    raise ValueError("bad lang")
+                out = [{"family": f["family"], "format": f["format"]}
+                       for f in _font_cache().values()
+                       if f["embeddable"] and lang in f["langs"]]
+                return self._json({"fonts": sorted(out, key=lambda x: x["family"])})
             if u.path == "/pdf":
                 d = book_dir(one("name"))
                 pdf = next(iter(sorted((d / "final").glob("*.pdf"))), d / "draft/book.pdf")
@@ -230,6 +284,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/file":
                 safe_file(data["name"], data["path"]).write_text(data["text"])
                 return self._json({"ok": True})
+            if u.path == "/api/font":
+                d = book_dir(data["name"])
+                argv = [sys.executable, str(SKILL / "scripts/fontpick.py"), "set", str(d)]
+                argv += ["--clear"] if data.get("clear") else \
+                        [f"--{data['lang']}", data["family"]]
+                p = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+                return self._json({"out": (p.stdout + p.stderr).strip(), "code": p.returncode})
             if u.path == "/api/run":
                 return self._json(run_script(data["name"], data["cmd"]))
             if u.path == "/api/new":

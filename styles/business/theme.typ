@@ -36,8 +36,8 @@
   margin: (top: 28mm, bottom: 30mm, left: 20mm, right: 47.5mm),
   brand: navy-700, brand-light: navy-100,
   ink: ink, muted: ink-60, paper: white,
-  body-font: ("Pretendard",), sans-font: ("Pretendard",),
-  display-font: ("Pretendard",),
+  body-font: lang-fonts(meta, ("Pretendard", "Noto Serif KR")), sans-font: lang-fonts(meta, ("Pretendard", "Noto Serif KR")),
+  display-font: lang-fonts(meta, ("Pretendard", "Noto Serif KR")),
   // 공식 TTF판의 내부 패밀리명은 "Gmarket Sans TTF" (OTF판 "Gmarket Sans"와 다름)
   stat-font: ("Gmarket Sans TTF", "Gmarket Sans"),
   quote-font: ("Noto Serif KR",),

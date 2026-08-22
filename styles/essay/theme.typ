@@ -15,9 +15,9 @@
   muted: rgb("#6E6A66"),
   rule: rgb("#DAD5CE"),
   paper: rgb("#FBFAF7"),
-  body-font: ("Noto Serif KR",),
-  sans-font: ("Pretendard",),
-  display-font: ("Noto Serif KR",),
+  body-font: lang-fonts(meta, ("Noto Serif KR", "Paperlogy 4")),
+  sans-font: lang-fonts(meta, ("Pretendard", "Noto Serif KR")),
+  display-font: lang-fonts(meta, ("Noto Serif KR", "Paperlogy 4")),
   body-size: 10pt,
   body-leading: 0.92em,
 )

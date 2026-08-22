@@ -6,8 +6,8 @@
 @font-face { font-family: "Pretendard"; src: url("$fonts_dir/Pretendard-ExtraBold.ttf"); font-weight: 800; }
 /* 한자(CJK 통합한자) 폴백 — Pretendard는 kana만 커버한다. 없으면 Chromium이 시스템 OTF로
    조용히 폴백해 Type3 글리프가 생기고 G2가 떨어진다. */
-@font-face { font-family: "NotoSerifKRFallback"; src: url("$fonts_dir/NotoSerifKR-Regular.ttf"); font-weight: 300 500; }
-@font-face { font-family: "NotoSerifKRFallback"; src: url("$fonts_dir/NotoSerifKR-Bold.ttf"); font-weight: 600 900; }
+@font-face { font-family: "Noto Serif KR"; src: url("$fonts_dir/NotoSerifKR-Regular.ttf"); font-weight: 300 500; }
+@font-face { font-family: "Noto Serif KR"; src: url("$fonts_dir/NotoSerifKR-Bold.ttf"); font-weight: 600 900; }
 @font-face { font-family: "Paperlogy"; src: url("$fonts_dir/Paperlogy-4Regular.ttf"); font-weight: 300 500; }
 @font-face { font-family: "Paperlogy"; src: url("$fonts_dir/Paperlogy-7Bold.ttf"); font-weight: 600 700; }
 @font-face { font-family: "Paperlogy"; src: url("$fonts_dir/Paperlogy-8ExtraBold.ttf"); font-weight: 800; }
@@ -24,9 +24,9 @@
      (백색에서도 4.74) — G14-C 본문 하한 4.5 미달. 표 셀·캡션이 tint 위에 놓이면 실패하므로 한 단계 어둡게
      고정: tint 5.81 · 백색 6.29. ink < ink-soft < ink-mute 시각 위계는 유지. */
   --rule: #d3dce2; --paper: #ffffff;
-  --han: "Pretendard", "Paperlogy", "NotoSerifKRFallback", sans-serif;
-  --disp: "Paperlogy", "Pretendard", "NotoSerifKRFallback", sans-serif;
-  --num: "Barlow", "Pretendard", "Paperlogy", "NotoSerifKRFallback", sans-serif;
+  --han: "Pretendard", "Paperlogy", "Noto Serif KR", sans-serif;
+  --disp: "Paperlogy", "Pretendard", "Noto Serif KR", sans-serif;
+  --num: "Barlow", "Pretendard", "Paperlogy", "Noto Serif KR", sans-serif;
 }
 
 /* 판면: 본문 narrow 106mm (좌27 / 우49). 폴리오·러닝 장식은 decorate.py 스탬핑 */

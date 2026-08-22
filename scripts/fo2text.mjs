@@ -20,34 +20,57 @@ const FALLBACK_WEIGHTS = {
   "Paperlogy-6SemiBold.ttf": 600,
   "Paperlogy-7Bold.ttf": 700,
 };
-const TEXT_STACK = "'Pretendard','Paperlogy'";
+const TEXT_STACK = "'Pretendard','Noto Serif KR','Paperlogy'";
+// usvg(Typst의 SVG 렌더러)는 font-family 목록을 순회하지 않는다 — 첫 가족만 매칭하고,
+// 그 가족에 없는 글자는 폰트 DB에서 제 마음대로 고른 폴백으로 그린다(실측: --font-path에
+// 사용자 폴더를 더하면 한자 라벨이 Murecho로 바뀜). 그래서 한자·가나가 들어간 <text>는
+// '한 벌로 커버되는 가족'을 첫 자리에 직접 박아 준다.
+const CJK_RE = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/;
+const DEFAULT_CJK_FAMILY = "Noto Serif KR";
 
-export function fontFaceCss(fontDir) {
+export function fontFaceCss(fontDir, extraFaces = []) {
   const files = readdirSync(fontDir);
   const face = (f, family, weight) =>
     `@font-face{font-family:'${family}';src:url('file://${fontDir}/${f}');font-weight:${weight};}`;
+  const serif = { "NotoSerifKR-Regular.ttf": 400, "NotoSerifKR-Bold.ttf": 700 };
   return [
     ...files.filter((f) => f in PRETENDARD_WEIGHTS).map((f) => face(f, "Pretendard", PRETENDARD_WEIGHTS[f])),
+    ...files.filter((f) => f in serif).map((f) => face(f, "Noto Serif KR", serif[f])),
     ...files.filter((f) => f in FALLBACK_WEIGHTS).map((f) => face(f, "Paperlogy", FALLBACK_WEIGHTS[f])),
+    // book.json fonts.ja — 사용자가 고른 일본어 폰트로 도해도 같이 맞춘다
+    ...extraFaces.map((e) => `@font-face{font-family:'${e.family}';src:url('file://${e.path}');`
+      + `font-weight:${e.weight || 400};}`),
   ].join("\n");
 }
 
-function harnessHtml(svg, fontDir) {
+function harnessHtml(svg, fontDir, cjk = DEFAULT_CJK_FAMILY, extraFaces = []) {
+  const stack = `'${cjk}',${TEXT_STACK}`;
   return `<!doctype html><html><head><meta charset="utf-8"><style>
-${fontFaceCss(fontDir)}
+${fontFaceCss(fontDir, extraFaces)}
 html,body{margin:0;padding:0;background:#fff;}
-#stage foreignObject, #stage foreignObject * { font-family:${TEXT_STACK} !important; }
-#stage svg text, #stage svg tspan { font-family:${TEXT_STACK} !important; }
+#stage foreignObject, #stage foreignObject * { font-family:${stack} !important; }
+#stage svg text, #stage svg tspan { font-family:${stack} !important; }
 </style></head><body><div id="stage">${svg}</div></body></html>`;
 }
 
 // authored SVG(에이전트가 직접 그린 네이티브 <text> 도해) 정규화 — antv 경로와 같은
 // 산출 계약 {svg, labels}를 지킨다: Pretendard·실측 font-size를 속성으로 베이크(독립
 // 파일화), 라벨 수집(G13 정본), 회전 금지, 텍스트 겹침 즉시 실패.
-export async function normalizeAuthoredSvg(page, rawSvg, fontDir) {
-  await page.setContent(harnessHtml(rawSvg, fontDir), { waitUntil: "networkidle" });
+export async function normalizeAuthoredSvg(page, rawSvg, fontDir, opts = {}) {
+  const cjk = opts.cjk || DEFAULT_CJK_FAMILY;
+  await page.setContent(harnessHtml(rawSvg, fontDir, cjk, opts.extraFaces || []),
+    { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
-  return page.evaluate(() => {
+  return page.evaluate(({ cjk, mix, cjkSrc }) => {
+    const CJK_RE = new RegExp(cjkSrc, "u");
+    const HANGUL_RE = /[가-힣ㄱ-ㅎㅏ-ㅣ]/u;
+    // usvg는 첫 가족만 매칭한다 → 그 문자열이 쓰는 문자 집합을 한 벌로 덮는 가족을 고른다.
+    // 한글+한자가 섞인 라벨은 둘 다 가진 동봉 폰트(Noto Serif KR)로, 순수 일본어는
+    // 사용자가 고른 일본어 폰트로 간다.
+    const pickFamily = (s) => {
+      if (!CJK_RE.test(s || "")) return "Pretendard";
+      return HANGUL_RE.test(s || "") ? `${mix}, Pretendard` : `${cjk}, Pretendard`;
+    };
     const svg = document.querySelector("#stage svg");
     if (!svg) throw new Error("no <svg> in input");
     if (svg.querySelector("foreignObject")) {
@@ -67,7 +90,7 @@ export async function normalizeAuthoredSvg(page, rawSvg, fontDir) {
       if (m && (Math.abs(m.b) > 0.01 * Math.abs(m.a) || Math.abs(m.c) > 0.01 * Math.abs(m.d))) {
         throw new Error(`회전 라벨 금지 — <text> #${idx + 1} '${el.textContent.slice(0, 15)}'`);
       }
-      el.setAttribute("font-family", "Pretendard, Paperlogy");
+      el.setAttribute("font-family", pickFamily(el.textContent));
       if (!el.getAttribute("font-size")) {
         el.setAttribute("font-size", parseFloat(cs.fontSize).toFixed(2));
       }
@@ -104,14 +127,25 @@ export async function normalizeAuthoredSvg(page, rawSvg, fontDir) {
       }
     }
     return { svg: new XMLSerializer().serializeToString(svg), labels };
-  });
+  }, { cjk, mix: DEFAULT_CJK_FAMILY, cjkSrc: CJK_RE.source });
 }
 
 // page: 재사용되는 Playwright Page. 반환 { svg, labels }
-export async function convertForeignObjectText(page, rawSvg, fontDir) {
-  await page.setContent(harnessHtml(rawSvg, fontDir), { waitUntil: "networkidle" });
+export async function convertForeignObjectText(page, rawSvg, fontDir, opts = {}) {
+  const cjk = opts.cjk || DEFAULT_CJK_FAMILY;
+  await page.setContent(harnessHtml(rawSvg, fontDir, cjk, opts.extraFaces || []),
+    { waitUntil: "networkidle" });
   await page.evaluate(() => document.fonts.ready);
-  return page.evaluate(() => {
+  return page.evaluate(({ cjk, mix, cjkSrc }) => {
+    const CJK_RE = new RegExp(cjkSrc, "u");
+    const HANGUL_RE = /[가-힣ㄱ-ㅎㅏ-ㅣ]/u;
+    // usvg는 첫 가족만 매칭한다 → 그 문자열이 쓰는 문자 집합을 한 벌로 덮는 가족을 고른다.
+    // 한글+한자가 섞인 라벨은 둘 다 가진 동봉 폰트(Noto Serif KR)로, 순수 일본어는
+    // 사용자가 고른 일본어 폰트로 간다.
+    const pickFamily = (s) => {
+      if (!CJK_RE.test(s || "")) return "Pretendard";
+      return HANGUL_RE.test(s || "") ? `${mix}, Pretendard` : `${cjk}, Pretendard`;
+    };
     const svg = document.querySelector("#stage svg");
     if (!svg) throw new Error("no <svg> in input");
     const ctm = svg.getScreenCTM().inverse();
@@ -203,7 +237,7 @@ export async function convertForeignObjectText(page, rawSvg, fontDir) {
     for (const ln of lines) {
       const t = document.createElementNS(NS, "text");
       t.setAttribute("x", ln.x); t.setAttribute("y", ln.y);
-      t.setAttribute("font-family", "Pretendard, Paperlogy");
+      t.setAttribute("font-family", pickFamily(ln.text));
       t.setAttribute("font-size", ln.fontSize);
       t.setAttribute("font-weight", ln.fontWeight);
       t.setAttribute("fill", ln.fill);
@@ -217,7 +251,7 @@ export async function convertForeignObjectText(page, rawSvg, fontDir) {
       svg: new XMLSerializer().serializeToString(svg),
       labels: lines.map((l) => l.text),
     };
-  });
+  }, { cjk, mix: DEFAULT_CJK_FAMILY, cjkSrc: CJK_RE.source });
 }
 
 // 자기검증: 원본/변환 SVG를 같은 하네스에서 스크린샷 → 픽셀 상이율 반환.

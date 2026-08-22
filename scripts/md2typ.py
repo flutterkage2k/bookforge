@@ -114,6 +114,13 @@ def render_tokens(tokens, ctx) -> str:
                     if m:
                         source = m.group(1).strip()
                     args = [f'"{content_escape(ctx["img_prefix"] + src)}"']
+                    # 사이드카 bf.width — HTML 트랙만 반영되던 폭 지정을 Typst에도 적용한다.
+                    # (세로형 도해가 전폭으로 부풀어 면을 통째로 먹는 사고를 막는 유일한 레버)
+                    sidecar = ctx["book_dir"] / "diagrams" / (Path(src).stem + ".json")
+                    if sidecar.exists():
+                        bfw = json.loads(sidecar.read_text(encoding="utf-8")).get("bf", {}).get("width")
+                        if bfw == "twothirds":
+                            args.append("width: 66%")
                     if cap:
                         args.append(f"caption: [{cap}]")
                     if source:
@@ -246,7 +253,8 @@ def split_callouts(md: str):
 def convert_chapter(md_path: Path, out_path: Path, title: str, summary: str | None,
                     img_prefix: str = "../../assets/") -> None:
     md = md_path.read_text(encoding="utf-8")
-    ctx = {"chapter_emitted": False, "title_raw": title, "summary": summary, "img_prefix": img_prefix}
+    ctx = {"chapter_emitted": False, "title_raw": title, "summary": summary,
+           "img_prefix": img_prefix, "book_dir": md_path.resolve().parent.parent}
     parts = ['#import "../_style/theme.typ": *\n']
     for seg in split_callouts(md):
         if seg[0] == "md":

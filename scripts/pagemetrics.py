@@ -53,6 +53,21 @@ def _union_len(segs):
     return total + (cur1 - cur0)
 
 
+def _block_count(segs, min_gap):
+    """세로로 떨어져 있는 잉크 덩어리 수 — 덩어리 사이마다 구조적 여백(제목 위 여백,
+    콜아웃·표 앞뒤 간격)이 한 번씩 붙는다. G8이 '공기 채움'과 '설계상 여백'을
+    구분하려면 이 수가 필요하다."""
+    if not segs:
+        return 0
+    segs = sorted(segs)
+    n, cur1 = 1, segs[0][1]
+    for a, b in segs[1:]:
+        if a - cur1 > min_gap:
+            n += 1
+        cur1 = max(cur1, b)
+    return n
+
+
 def analyze(pdf_path, frame_mm):
     """Returns dict: {pages: [per-page dict], book_pitch, frame_pt, n_grid,
     derived_frame: (top,bottom) or None}."""
@@ -163,6 +178,8 @@ def analyze(pdf_path, frame_mm):
         ink = _union_len(segs) / fh if fh > 0 else 0.0
         p["ink"] = round(min(1.0, ink), 3)
         p["gap"] = round(max(0.0, p["reach"] - p["ink"]), 3)
+        p["blocks"] = _block_count(segs, (book_pitch or 12) * 0.6)
+        p["frame_h"] = round(fh, 1)
 
     # 판면 역산(드리프트 탐지): 행 10개 이상인 면들의 첫 행 y0 / reach 0.9 이상 면들의 끝 행 y1
     firsts = [p["_lines"][0]["y0"] for p in pages if p["lines"] >= 10]

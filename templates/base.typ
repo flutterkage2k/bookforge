@@ -24,6 +24,20 @@
   heading3-size: 11pt,
 )
 
+// ---- 언어별 폰트 지정 (book.json "fonts") ---------------------------------
+// 사용자가 고른 폰트를 스택 앞에 끼운다. en은 라틴·숫자만, ja는 가나·한자만
+// 담당하도록 covers로 묶어 한글 본문 폰트를 밀어내지 않게 한다. 지정이 없으면
+// 스타일 기본 스택 그대로 — 동봉 폰트로 재현되는 경로가 항상 살아 있어야 한다.
+#let JA-COVERS = regex("[\u{3040}-\u{30FF}\u{31F0}-\u{31FF}\u{3400}-\u{4DBF}\u{4E00}-\u{9FFF}\u{F900}-\u{FAFF}\u{FF66}-\u{FF9D}]")
+#let lang-fonts(meta, base) = {
+  let f = meta.at("fonts", default: (:))
+  let pre = ()
+  if "en" in f { pre.push((name: f.en.family, covers: regex("[A-Za-z0-9]"))) }
+  if "ja" in f { pre.push((name: f.ja.family, covers: JA-COVERS)) }
+  if "ko" in f { pre.push(f.ko.family) }
+  pre + base
+}
+
 #let merged(tokens) = {
   let t = default-tokens
   for (k, v) in tokens { t.insert(k, v) }

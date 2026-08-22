@@ -98,6 +98,38 @@ def md_to_html(md: str, book_dir: Path | None = None, ch_idx: int | None = None)
         fig, html)
     return html
 
+
+def apply_user_fonts(css: str, book: dict) -> str:
+    """book.json "fonts"(언어별 사용자 폰트)를 테마 CSS의 폰트 변수 앞에 끼운다.
+
+    스택 순서는 en → ja → ko. 앞 폰트에 없는 글자는 브라우저가 다음으로 넘기므로
+    unicode-range 없이도 언어별 분담이 성립한다(영문 폰트에는 한자·한글이 없다).
+    테마마다 변수 이름이 달라(--han/--serif/--display…) 이름 목록으로 훑는다.
+    HTML 트랙은 .ttf만 받는다 — fontpick.py가 지정 시점에 이미 거른다.
+    """
+    fonts = book.get("fonts") or {}
+    if not fonts:
+        return css
+    faces, families = [], []
+    for lang in ("en", "ja", "ko"):
+        spec = fonts.get(lang)
+        if not spec:
+            continue
+        fam = spec["family"]
+        families.append(f'"{fam}"')
+        for f in spec.get("files", []):
+            if f.get("format") != "ttf":
+                continue
+            faces.append(f'@font-face{{font-family:"{fam}";'
+                         f'src:url("{Path(f["path"]).as_uri()}");'
+                         f'font-weight:{f.get("weight", 400)};font-style:normal;}}')
+    if not families:
+        return css
+    pre = ", ".join(families) + ", "
+    css = re.sub(r"(--(?:han|disp|num|serif|sans|display)\s*:\s*)", r"\g<1>" + pre, css)
+    return "\n".join(faces) + "\n" + css
+
+
 def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Path):
     ts = book_dir / "typeset"
     ts.mkdir(exist_ok=True)
@@ -116,6 +148,8 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
         key_color=key,
         key_tint=f"rgba({r_},{g_},{b_},0.08)",
     )
+
+    css = apply_user_fonts(css, book)
 
     # refit-params.json: 장별 자간 미세조정(pagination.md §5 L2). 주의 — inline
     # letter-spacing은 테마 기본값을 대체하므로 refit.py가 (테마 기본 + Δ) 절대값을 준다.

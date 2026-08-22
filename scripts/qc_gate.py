@@ -603,14 +603,23 @@ def main():
         # 한 면에 섹션 전환이 2회 이상이면 여백이 배로 쌓이므로 디스플레이 행 수 비례 가산.
         gap_thr = 0.18
         if style == "insight":
-            heads = sum(1 for l in p["_lines"] if l["size"] >= 1.3 * body_size)
-            gap_thr = 0.28 + 0.10 * max(0, heads - 1)
+            # 디스플레이 행 수 비례 가산은 아래 '블록 경계 가산'으로 대체됐다 —
+            # 제목보다 콜아웃·표가 공기의 주범이라 블록 수가 더 정확한 대리변수다.
+            gap_thr = 0.28
         elif style == "business":
             # 액션 타이틀(16pt + 전폭 룰 + 전후 v1.8/1.1em)과 키 스탯 디스플레이가
             # 면당 ~10mm(≈0.045)의 구조적 공기를 만든다(실측 — p13 홀 스캔). 디스플레이
             # 행 수에 비례해 가산, 디스플레이 없는 순본문 면은 0.18 그대로.
             heads = sum(1 for l in p["_lines"] if l["size"] >= 1.3 * body_size)
             gap_thr = 0.18 + 0.05 * heads
+        # 블록 경계 가산: 잉크 덩어리 사이마다 구조적 여백(제목 위 여백·콜아웃/표 앞뒤
+        # 간격)이 한 번씩 붙는다. 덩어리 경계 하나당 격자 1행을 허용치로 인정한다.
+        # 종전 임계는 '디스플레이 행 수'만 셌는데, 정작 공기를 만드는 것은 제목보다
+        # 콜아웃·표·도해 같은 블록이다(실측: 콜아웃 2개 면 gap 0.34 vs 순본문 면 0.19).
+        # 상한 0.20 — 잘게 쪼갠 면에 무제한 면제를 주지 않는다(공기 채움 탐지 유지).
+        pitch = m["book_pitch"] or 12
+        fh = p.get("frame_h") or 1
+        gap_thr += min(0.20, max(0, p.get("blocks", 1) - 1) * pitch / fh)
         if p["gap"] > gap_thr and p["lines"] < 0.8 * N:
             g8["stretched"].append({"page": pg, "gap": p["gap"], "lines": p["lines"]})
         # 행송 편차는 WARN만 — 두 엔진 모두 페이지 단위로 행송을 벌릴 능력이 없다(실측).

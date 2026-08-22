@@ -16,7 +16,7 @@ import { convertForeignObjectText, fontFaceCss, normalizeAuthoredSvg, pixelSelfC
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FONT_DIR = path.join(SKILL, "assets", "fonts");
-const CONVERTER_VERSION = 6; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
+const CONVERTER_VERSION = 10; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
 const PIXEL_TOLERANCE = 0.02;
 const MM2PT = 72 / 25.4;
 
@@ -36,6 +36,14 @@ if (!dg) fail(`styles/${style}/tokens.json에 diagram 블록 없음 — 이 스�
 const bookMeta = JSON.parse(readFileSync(path.join(bookDir, "book.json"), "utf8"));
 const palette = [...dg.palette];
 if (bookMeta.brand) palette[0] = bookMeta.brand;
+// book.json fonts.ja — 도해 안의 한자·가나도 본문과 같은 폰트로 맞춘다.
+// (usvg는 font-family 목록을 순회하지 않으므로 '첫 가족'이 전부다 — fo2text 주석 참조)
+const jaFont = (bookMeta.fonts || {}).ja || null;
+const cjkOpts = jaFont
+  ? { cjk: jaFont.family,
+      extraFaces: (jaFont.files || []).filter((f) => f.format === "ttf")
+        .map((f) => ({ family: jaFont.family, path: f.path, weight: f.weight })) }
+  : {};
 
 // 템플릿 적합성 실측 원장 — blocked 템플릿은 SSR 전에 차단 (minFontPt 사후 검사와 이중 방어)
 const ledger = JSON.parse(readFileSync(path.join(SKILL, "references", "diagram-ledger.json"), "utf8"));
@@ -124,6 +132,17 @@ function alienColors(svg, palette, strict = false) {
     for (const d of s[1].matchAll(/(?:^|;)\s*(?:fill|stroke)\s*:\s*([^;]+)/gi)) check(d[1]);
   }
   return [...out];
+}
+
+// authored SVG 색 토큰 — {{brand}}·{{ink}}·{{muted}}·{{rule}}·{{paper}}를 스타일 토큰의
+// diagram.roles 값으로 치환한다. 색을 SVG에 직접 박으면 그 도해는 그 스타일 전용이 되어,
+// 같은 원고를 다른 스타일로 옮길 때 손으로 색을 갈아야 한다(실측: insight 이식 시 4색 수동 교체).
+function applyColorRoles(svg, roles) {
+  if (!roles) return svg;
+  return svg.replace(/\{\{\s*([a-z-]+)\s*\}\}/g, (m, key) => {
+    if (!(key in roles)) fail(`알 수 없는 색 토큰 {{${key}}} — 사용 가능: ${Object.keys(roles).join(", ")}`);
+    return roles[key];
+  });
 }
 
 // antv 트랙: 템플릿에 하드코딩된 강조색(vs 배지·화살표 그라데이션 등)은 theme palette로
@@ -308,13 +327,13 @@ for (const file of sidecars) {
     // ---- authored SVG 트랙: 에이전트가 그린 diagrams/fig-NN.svg를 동일 정규화 파이프라인에 통과 ----
     const srcPath = path.join(bookDir, "diagrams", `${name}.svg`);
     if (!existsSync(srcPath)) fail(`${name}: kind=authored인데 diagrams/${name}.svg 부재`);
-    const rawAuthored = readFileSync(srcPath, "utf8");
+    const rawAuthored = applyColorRoles(readFileSync(srcPath, "utf8"), dg.roles);
     if (/xml-stylesheet/.test(rawAuthored) || /(?:href|src)="https?:\/\//.test(rawAuthored)) {
       fail(`${name}: 외부 참조(CDN 폰트·원격 자원) 금지 — 자립 SVG로 그릴 것`);
     }
     // palette 포함 필수: 스타일(팔레트) 교체 재빌드 시 캐시 미스로 alienColors 재검증 강제
     const hashA = createHash("sha256")
-      .update(JSON.stringify({ svg: rawAuthored, width: widthKey, palette, v: CONVERTER_VERSION }))
+      .update(JSON.stringify({ svg: rawAuthored, width: widthKey, palette, cjk: cjkOpts.cjk || null, v: CONVERTER_VERSION }))
       .digest("hex");
     const outSvgA = path.join(assetsDir, `${name}.svg`);
     const outLabelsA = path.join(assetsDir, `${name}.labels.json`);
@@ -329,7 +348,7 @@ for (const file of sidecars) {
     }
     let normalized, labelsA;
     try {
-      ({ svg: normalized, labels: labelsA } = await normalizeAuthoredSvg(page, rawAuthored, FONT_DIR));
+      ({ svg: normalized, labels: labelsA } = await normalizeAuthoredSvg(page, rawAuthored, FONT_DIR, cjkOpts));
     } catch (e) {
       fail(`${name}: ${e.message.replace(/^.*Error: /s, "").split("\n")[0]}`);
     }
@@ -372,7 +391,7 @@ for (const file of sidecars) {
   dsl = applyTheme(dsl, palette);
 
   const hash = createHash("sha256")
-    .update(JSON.stringify({ dsl, width: widthKey, icons: wantIcons, v: CONVERTER_VERSION }))
+    .update(JSON.stringify({ dsl, width: widthKey, icons: wantIcons, cjk: cjkOpts.cjk || null, v: CONVERTER_VERSION }))
     .digest("hex");
   const outSvg = path.join(assetsDir, `${name}.svg`);
   const outLabels = path.join(assetsDir, `${name}.labels.json`);
@@ -394,7 +413,7 @@ for (const file of sidecars) {
   }
   let convertedRaw, labels;
   try {
-    ({ svg: convertedRaw, labels } = await convertForeignObjectText(page, raw, FONT_DIR));
+    ({ svg: convertedRaw, labels } = await convertForeignObjectText(page, raw, FONT_DIR, cjkOpts));
   } catch (e) {
     fail(`${name}: ${e.message.replace(/^.*Error: /s, "").split("\n")[0]}`);
   }
