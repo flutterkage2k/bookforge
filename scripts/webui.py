@@ -27,6 +27,16 @@ CHAPTER_RE = re.compile(r"^ch-[0-9]{2,3}\.md$")
 EDITABLE = ("book.json", "outline.json", "research.md")
 STYLES = list(STYLE_KO)
 LENGTHS = {"short": "짧게", "standard": "보통", "long": "길게"}
+# 스타일 고르기용 견본 — examples/showcase에 이미 들어 있는 실물 산출물이다.
+# (새로 렌더하지 않는다: 표지 한 장을 만들려고 빌드를 돌릴 이유가 없다)
+SAMPLES = {
+    "practical": ("practical-prompt-patterns-cover.png", "practical-prompt-patterns-page9.png"),
+    "insight": ("insight-ondevice-ai-cover.png", "insight-ondevice-ai-page10.png"),
+    "academic": ("academic-game-theory-cover.png", "academic-game-theory-page11.png"),
+    "essay": ("essay-evening-sentences-cover.png", "essay-evening-sentences-page6.png"),
+    "business": ("business-sme-ai-cover.png", "business-sme-ai-page9.png"),
+    "magazine": ("magazine-trend-brief-cover.png", "magazine-trend-brief-page6.png"),
+}
 ROOT = Path("books")
 
 # 게이트 코드 → (무엇을 봤는가, 떨어졌을 때 할 일). qc_gate.py의 판정 기준을 사람 말로 옮긴 것.
@@ -113,6 +123,10 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  .styles div{border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer}
  .styles div.on{border-color:var(--brand);background:var(--brand-soft)}
  .styles b{font-size:14px}.styles small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+ .styles{grid-template-columns:repeat(auto-fill,minmax(215px,1fr))}
+ .samples{display:flex;gap:6px;margin-bottom:8px}
+ .samples img{width:50%;border:1px solid var(--line);border-radius:6px;background:#fff;
+   aspect-ratio:3/4;object-fit:contain}
  .chaps{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
  .chaps button.on{border-color:var(--brand);color:var(--brand);font-weight:600}
  .muted{color:var(--mute);font-size:13px}
@@ -261,8 +275,14 @@ const PANEL={
        Object.entries(LENGTHS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
    </div>
    <label>스타일</label>
+   <p class=hint style="margin:0 0 8px">아래는 각 스타일로 실제 만든 책의 표지와 본문 지면입니다.
+     클릭해서 고르세요.</p>
    <div class=styles>${STYLES.map(s=>
      `<div class="${s[0]===newStyle?'on':''}" onclick="pickStyle('${s[0]}')">
+        <div class=samples>
+          <img src="/sample?style=${s[0]}&kind=cover" alt="${esc(s[1])} 표지">
+          <img src="/sample?style=${s[0]}&kind=page" alt="${esc(s[1])} 본문">
+        </div>
         <b>${esc(s[1])}</b><small>${esc(s[2])}</small></div>`).join('')}</div>
    <div class=row style="margin-top:14px"><button class=primary onclick=create()>만들기</button>
      <span class=muted>만들면 2단계(자료)로 넘어갑니다</span></div>
@@ -791,6 +811,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not pdf.exists():
                     return self._send(404, "text/plain; charset=utf-8", "아직 빌드 전".encode())
                 return self._send_pdf(pdf, d, final is not None)
+            if u.path == "/sample":
+                style, kind = one("style"), one("kind") or "cover"
+                if style not in SAMPLES:
+                    raise ValueError("bad style")
+                fn = SAMPLES[style][0 if kind == "cover" else 1]
+                img = SKILL / "examples" / "showcase" / fn
+                if not img.exists():
+                    return self._send(404, "text/plain", b"no sample")
+                body = img.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Cache-Control", "max-age=86400")  # 견본은 안 바뀐다
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
             if u.path == "/qc":
                 d = book_dir(one("name"))
                 img = d / "qc" / Path(one("page")).name
