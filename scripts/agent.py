@@ -719,6 +719,8 @@ def main():
     ap.add_argument("--max-queries", type=int, default=6, help="웹 검색 최대 횟수(=질문 수)")
     ap.add_argument("--today", default="", help="확인일로 기록할 날짜 (YYYY-MM-DD)")
     ap.add_argument("--figs", type=int, default=3, help="자동 생성할 도해 최대 개수")
+    if "--selfcheck" in sys.argv[1:]:   # 다른 스크립트와 같은 형태도 받는다
+        return demo()
     a = ap.parse_args()
     MODEL = a.model
     if a.task == "selfcheck":

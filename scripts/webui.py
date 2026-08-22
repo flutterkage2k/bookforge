@@ -773,6 +773,7 @@ def state(name: str) -> dict:
     research = d / "research.md"
     shots = sorted(p.name for p in (d / "qc").glob("p*.png"))
     gate = gate_summary(d)
+    pmap = page_map(d, outline)
     # 빌드를 다시 하면 build.py가 final/을 지운다 — 그때 남아 있는 이전 게이트 결과는
     # 지금 원고의 결과가 아니다. 검사 리포트가 draft보다 오래됐으면 '검사 필요'로 되돌린다.
     draft = d / "draft" / "book.pdf"
@@ -788,8 +789,8 @@ def state(name: str) -> dict:
         "chapters": chapters,
         "sizes": {c: len((d / c).read_text().strip()) for c in chapters},
         "shots": shots,
-        "pagemap": page_map(d, outline),
-        "pages": len(page_map(d, outline)),
+        "pagemap": pmap,
+        "pages": len(pmap),
         "gate": gate,
         "fonts": {k: v["family"] for k, v in (book.get("fonts") or {}).items()},
         "steps": {
