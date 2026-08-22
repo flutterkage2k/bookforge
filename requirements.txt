@@ -1,0 +1,3 @@
+# 조판·검사에 필요한 파이썬 패키지 (python3 -m pip install -r requirements.txt)
+pymupdf>=1.24
+markdown-it-py>=3.0

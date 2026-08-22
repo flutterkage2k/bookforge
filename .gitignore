@@ -3,3 +3,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 node_modules/
+
+# 웹 UI를 저장소 안에서 실행할 때 생기는 작업물 — 원고는 공개 대상이 아니다
+books/
+*.md.bak
+.bookforge.json
