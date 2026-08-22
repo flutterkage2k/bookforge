@@ -1,5 +1,5 @@
 // bookforge style: academic — 학술·논문형 (STYLE.md: 신국판 153×225, 1도+먹)
-#import "base.typ": default-tokens, keep-words, chapter-state
+#import "base.typ": default-tokens, keep-words, chapter-state, lang-fonts
 #import "base.typ" as base
 #let code-font = ((name: "DejaVu Sans Mono", covers: regex("[A-Za-z0-9]")), "Pretendard")
 
