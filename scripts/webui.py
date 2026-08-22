@@ -727,6 +727,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_pdf(self, pdf: Path, d: Path, is_final: bool):
+        """내려받을 때 이름이 정해지도록 Content-Disposition을 붙인다.
+
+        형식: `제목_발행연월.pdf` (게이트 통과 전이면 `_draft`). 브라우저 PDF 뷰어가
+        이 이름을 그대로 저장 이름으로 쓴다. 한글 제목은 RFC 5987(filename*)로 주고,
+        그걸 못 읽는 옛 브라우저용 ASCII 대체 이름은 폴더명으로 준다.
+        """
+        book = json.loads((d / "book.json").read_text())
+        title = re.sub(r'[\\/:*?"<>|]+', " ", str(book.get("title") or d.name))
+        title = re.sub(r"\s+", " ", title).strip() or d.name
+        stamp = str(book.get("date") or "").strip()
+        name = f"{title}_{stamp}" if stamp else title
+        if not is_final:
+            name += "_draft"
+        ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", d.name) + ".pdf"
+        quoted = urllib.parse.quote(name + ".pdf")
+        body = pdf.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Disposition",
+                         "inline; filename=\"%s\"; filename*=UTF-8''%s" % (ascii_name, quoted))
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _json(self, obj, code=200):
         self._send(code, "application/json; charset=utf-8",
                    json.dumps(obj, ensure_ascii=False).encode())
@@ -761,10 +786,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json({"fonts": sorted(out, key=lambda x: x["family"])})
             if u.path == "/pdf":
                 d = book_dir(one("name"))
-                pdf = next(iter(sorted((d / "final").glob("*.pdf"))), d / "draft/book.pdf")
+                final = next(iter(sorted((d / "final").glob("*.pdf"))), None)
+                pdf = final or (d / "draft/book.pdf")
                 if not pdf.exists():
                     return self._send(404, "text/plain; charset=utf-8", "아직 빌드 전".encode())
-                return self._send(200, "application/pdf", pdf.read_bytes())
+                return self._send_pdf(pdf, d, final is not None)
             if u.path == "/qc":
                 d = book_dir(one("name"))
                 img = d / "qc" / Path(one("page")).name
