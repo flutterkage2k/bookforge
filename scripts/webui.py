@@ -180,7 +180,9 @@ async function open_(n){
   $('pdflink').href='/pdf?name='+n+'&t='+Date.now();
   const g=state.gate;
   $('hstate').className='pill '+(g? (g.pass?'ok':'bad') : 'idle');
-  $('hstate').textContent=g? (g.pass?`게이트 통과 · ${g.pages}쪽`:'게이트 실패') : '미빌드';
+  $('hstate').textContent = !g ? '미빌드'
+    : g.stale ? '빌드 후 검사 필요' : (g.pass?`게이트 통과 · ${g.pages}쪽`:'게이트 실패');
+  if(g&&g.stale) $('hstate').className='pill idle';
   $('curfonts').textContent=Object.keys(state.fonts||{}).length
     ? Object.entries(state.fonts).map(([k,v])=>`${k}: ${v}`).join(' · ') : '동봉 폰트';
   if(!chap || !state.chapters.includes(chap)) chap=state.chapters[0]||null;
@@ -203,7 +205,9 @@ function render(){
     return `<button class="step ${n===step?'on':''} ${done?'done':''}" onclick="go(${n})">
       <b>${n}. ${s[0]}</b><small>${s[1]}</small></button>`;
   }).join('');
-  $('panel').innerHTML = (!state && step!==1) ? cardMsg('왼쪽에서 책을 고르거나 새로 만드세요.') : PANEL[step]();
+  $('panel').innerHTML = (!state && step!==1)
+    ? cardMsg('왼쪽에서 책을 고르거나 새로 만드세요.')
+    : ((state && step!==1 ? banner() : '') + PANEL[step]());
   if(step===4) loadChapter();
   if(step===2) loadFile('research.md','ta2');
 }
@@ -212,6 +216,23 @@ function stepDone(n){
   return [null,true,s.research,s.outline,s.written,s.passed,s.reviewed][n];
 }
 function cardMsg(m){ return `<div class=card><p class=muted>${m}</p></div>`; }
+
+// 지금 무엇을 해야 하는지 한 줄로 — 상태에서 계산한다(모든 단계 상단에 같은 문장이 뜬다)
+function nextAction(){
+  const s=state.steps;
+  if(!s.outline)  return ['3단계에서 장 제목을 하나 이상 넣고 저장하세요. 목차가 없으면 빌드가 실패합니다.',3];
+  if(!s.written)  return ['4단계에서 각 장의 본문을 쓰세요. 빈 원고로 빌드하면 게이트가 떨어집니다.',4];
+  if(!s.built)    return ['5단계에서 ① 빌드를 누르세요.',5];
+  if(!s.passed)   return ['5단계에서 ② 게이트를 누르세요. 통과해야 final PDF가 생깁니다.',5];
+  if(!s.reviewed) return ['5단계에서 ③ 지면 이미지를 만들고, 6단계에서 눈으로 확인하세요.',5];
+  return ['모든 단계를 마쳤습니다. 원고를 고치면 5단계부터 다시 돌리세요.',6];
+}
+function banner(){
+  const [msg,n]=nextAction();
+  return `<div class=card style="border-color:var(--brand);background:var(--brand-soft)">
+    <div class=row><b>다음 할 일</b><span style="flex:1">${msg}</span>
+    <button onclick="go(${n})">${n}단계로</button></div></div>`;
+}
 
 const PANEL={
  1:()=>`<div class=card>
@@ -253,14 +274,19 @@ const PANEL={
    <div class=row style="margin-top:12px">
      <button onclick=addRow()>+ 장 추가</button>
      <button class=primary onclick=saveOutline()>저장</button>
-     <span class=muted>${(state.outline||[]).length}개 장</span>
+     <span class=muted>${(state.outline||[]).length}개 장 ${
+       state.steps.outline?'':'· 아직 비어 있습니다(빌드하려면 최소 1장 필요)'}</span>
    </div>
+   <p class=hint style="margin-top:10px">건너뛸 수 없는 단계입니다. 목차가 비면 빌드가
+     <code>chapter file missing</code>으로 멈춥니다. 분량 기준은 짧게 = 5~7장입니다.</p>
  </div>`,
  4:()=>`<div class=card>
    <h2>집필</h2>
    <p class=hint>마크다운으로 씁니다. 첫 줄은 <code># 장 제목</code>이고 목차의 제목과 같아야 합니다.</p>
-   <div class=chaps>${state.chapters.map(c=>
-     `<button class="${c===chap?'on':''}" onclick="pickChap('${c}')">${c.replace('chapters/','')}</button>`).join('')
+   <div class=chaps>${state.chapters.map(c=>{
+     const n=(state.sizes||{})[c]||0;
+     return `<button class="${c===chap?'on':''}" onclick="pickChap('${c}')">
+       ${c.replace('chapters/','')} <span class=muted>${n<400?'미작성':n+'자'}</span></button>`;}).join('')
      || '<span class=muted>3단계에서 목차를 먼저 저장하세요.</span>'}</div>
    <textarea id=ta4 rows=22></textarea>
    <div class=row style="margin-top:10px"><button class=primary onclick="saveFile(chap,'ta4')">저장</button>
@@ -279,10 +305,16 @@ const PANEL={
    <h2>빌드·검사</h2>
    <p class=hint>빌드가 PDF를 만들고, 게이트가 검사를 돌립니다. 통과해야만 final 폴더에 PDF가 생깁니다.</p>
    <div class=row>
-     <button class=primary onclick="run('build')">① 빌드</button>
-     <button class=primary onclick="run('qc')">② 게이트</button>
-     <button onclick="run('sheet')">③ 지면 이미지 만들기</button>
+     <button class="${state.steps.built?'':'primary'}" onclick="run('build')">① 빌드</button>
+     <button class="${state.steps.built&&!state.steps.passed?'primary':''}"
+       ${state.steps.built?'':'disabled title="먼저 빌드하세요"'} onclick="run('qc')">② 게이트</button>
+     <button ${state.steps.built?'':'disabled title="먼저 빌드하세요"'}
+       onclick="run('sheet')">③ 지면 이미지 만들기</button>
    </div>
+   <table style="margin-top:12px"><tr><th style="width:22%">버튼</th><th>무엇이 생기나</th></tr>
+     <tr><td>① 빌드</td><td><code>draft/book.pdf</code> — 아직 검사 전 원고 PDF</td></tr>
+     <tr><td>② 게이트</td><td>검사 통과 시에만 <code>final/책이름.pdf</code>. 실패하면 아래 표에 이유가 뜹니다</td></tr>
+     <tr><td>③ 지면 이미지</td><td><code>qc/p001.png</code>… — 6단계에서 볼 지면 그림</td></tr></table>
    ${gateTable()}
  </div>`,
  6:()=>`<div class=card>
@@ -302,7 +334,8 @@ function gateTable(){
     <td>${esc(it.what)}${it.ok?'':`<div class=muted>${esc(it.detail||'')}</div>`}</td>
     <td class=muted>${it.ok?'':esc(it.fix)}</td></tr>`).join('');
   return `<p style="margin:14px 0 6px">
-    <span class="pill ${g.pass?'ok':'bad'}">${g.pass?'통과':'실패'}</span>
+    <span class="pill ${g.stale?'idle':(g.pass?'ok':'bad')}">${
+      g.stale?'이전 결과(다시 검사 필요)':(g.pass?'통과':'실패')}</span>
     <span class=muted> · ${g.pages}쪽 · 권장 ${g.range[0]}~${g.range[1]}쪽</span></p>
     <table><thead><tr><th>검사</th><th>무엇을 봤나</th><th>실패 시 할 일</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
@@ -348,9 +381,10 @@ async function create(){
 async function run(cmd){
   $('log').textContent='실행 중…';
   const r=await api('/api/run',{name:book,cmd});
-  $('log').textContent=r.out||r.error;
   await open_(book);
-  if(cmd==='sheet') go(6);
+  const [msg]=nextAction();
+  $('log').textContent=(r.out||r.error)+'\n\n▶ 다음: '+msg;
+  if(cmd==='sheet') go(6); else render();
 }
 async function loadFonts(){
   const d=await api('/api/fonts?lang='+$('flang').value);
@@ -447,10 +481,20 @@ def state(name: str) -> dict:
     research = d / "research.md"
     shots = sorted(p.name for p in (d / "qc").glob("p*.png"))
     gate = gate_summary(d)
+    # 빌드를 다시 하면 build.py가 final/을 지운다 — 그때 남아 있는 이전 게이트 결과는
+    # 지금 원고의 결과가 아니다. 검사 리포트가 draft보다 오래됐으면 '검사 필요'로 되돌린다.
+    draft = d / "draft" / "book.pdf"
+    report = d / "gate-report.json"
+    stale = (draft.exists() and report.exists()
+             and report.stat().st_mtime < draft.stat().st_mtime)
+    final_pdf = next(iter((d / "final").glob("*.pdf")), None)
+    if gate:
+        gate["stale"] = bool(stale) or final_pdf is None
     return {
         "book": book,
         "outline": outline,
         "chapters": chapters,
+        "sizes": {c: len((d / c).read_text().strip()) for c in chapters},
         "shots": shots,
         "gate": gate,
         "fonts": {k: v["family"] for k, v in (book.get("fonts") or {}).items()},
@@ -459,7 +503,7 @@ def state(name: str) -> dict:
             "outline": len(real) > 0,
             "written": bool(chapters) and len(written) == len(chapters),
             "built": (d / "draft" / "book.pdf").exists(),
-            "passed": bool(gate and gate["pass"]),
+            "passed": bool(gate and gate["pass"] and not gate["stale"]),
             "reviewed": bool(shots),
         },
     }
