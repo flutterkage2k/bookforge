@@ -247,7 +247,7 @@ function banner(){
 }
 
 const PANEL={
- 1:()=>`<div class=card>
+ 1:()=>(state?metaForm():'')+`<div class=card>
    <h2>새 책 만들기</h2>
    <p class=hint>폴더 이름은 영문·숫자만. 제목·저자는 나중에 바꿔도 됩니다.</p>
    <div class=row>
@@ -350,13 +350,51 @@ const PANEL={
  </div>`,
  6:()=>`<div class=card>
    <h2>검수</h2>
-   <p class=hint>파일이 생긴 것은 완료가 아닙니다. 표지·차례·도비라·본문을 눈으로 확인하세요.</p>
-   ${state.shots.length? `<div class=grid>${state.shots.map(s=>
-     `<img src="/qc?name=${book}&page=${s}&t=${Date.now()}" loading=lazy>`).join('')}</div>`
+   <p class=hint>지면을 눈으로 보고, 고칠 곳을 찾으면 그 쪽 아래 버튼으로 바로 갑니다.
+     표지·차례는 <b>책 정보</b>와 스타일이 만들고, 본문 지면은 <b>그 장의 원고</b>가 만듭니다.
+     쪽에 무엇이 몇 번째로 오는지는 직접 지정하지 않습니다 — 원고 순서와 분량이 정합니다.</p>
+   ${state.shots.length? `<div class=grid>${state.shots.map(s=>{
+     const pg=String(parseInt(s.replace(/[^0-9]/g,''),10));
+     const src=(state.pagemap||{})[pg];
+     const where = !src ? '' : src==='front'
+       ? `<button onclick="go(1)">책 정보 고치기</button>`
+       : `<button onclick="pickChap('chapters/${src}');go(4)">${src} 고치기</button>`;
+     return `<figure style="margin:0">
+       <img src="/qc?name=${book}&page=${s}&t=${Date.now()}" loading=lazy>
+       <figcaption class=muted style="display:flex;gap:6px;align-items:center;margin-top:4px">
+         <b>${pg}쪽</b>${src&&src!=='front'?`<span>${src}</span>`:'<span>앞부속</span>'}
+         <span style="flex:1"></span>${where}</figcaption></figure>`;}).join('')}</div>`
      : '<p class=muted>5단계에서 “지면 이미지 만들기”를 먼저 누르세요.</p>'}
  </div>`,
 };
 
+function metaForm(){
+  const b=state.book||{};
+  return `<div class=card>
+    <h2>책 정보 — 표지·판권면에 그대로 실립니다</h2>
+    <p class=hint>여기 값이 표지 문구가 됩니다. 고친 뒤 5단계에서 다시 빌드해야 반영됩니다.
+      표지의 <b>배치·급수</b>는 스타일 팩이 정합니다(스타일을 바꾸면 표지가 통째로 달라집니다).</p>
+    <div class=row>
+      <div style="flex:2"><label>제목</label><input id=mtitle value="${esc(b.title||'')}"></div>
+      <div style="flex:2"><label>부제 (비우면 표지 리본이 사라집니다)</label>
+        <input id=msub value="${esc(b.subtitle||'')}"></div>
+    </div>
+    <div class=row>
+      <div style="flex:1"><label>지은이</label><input id=mauthor value="${esc(b.author||'')}"></div>
+      <div style="flex:1"><label>펴낸곳</label><input id=mpub value="${esc(b.publisher||'')}"></div>
+      <div style="flex:1"><label>발행 (예: 2026-08)</label><input id=mdate value="${esc(b.date||'')}"></div>
+      <div style="flex:1"><label>브랜드색 (#rrggbb)</label><input id=mbrand value="${esc(b.brand||'')}"></div>
+    </div>
+    <div class=row style="margin-top:12px"><button class=primary onclick=saveMeta()>책 정보 저장</button>
+      <span class=muted>저장 후 5단계 ① 빌드</span></div>
+  </div>`;
+}
+async function saveMeta(){
+  const r=await api('/api/meta',{name:book,title:$('mtitle').value,subtitle:$('msub').value,
+    author:$('mauthor').value,publisher:$('mpub').value,date:$('mdate').value,brand:$('mbrand').value});
+  $('log').textContent=r.out||r.error;
+  if(!r.error) open_(book);
+}
 function gateTable(){
   const g=state.gate;
   if(!g) return '<p class=muted style="margin-top:14px">아직 검사 결과가 없습니다.</p>';
@@ -555,6 +593,30 @@ def gate_summary(d: Path) -> dict | None:
             "range": g1.get("range") or [0, 0], "items": items}
 
 
+def page_map(d: Path, outline: list) -> dict:
+    """쪽번호 → 그 쪽이 속한 원고 파일. 검수에서 '이 쪽은 어디서 고치나'에 답하려면 필요하다."""
+    pdf = next(iter(sorted((d / "final").glob("*.pdf"))), d / "draft" / "book.pdf")
+    if not pdf.exists():
+        return {}
+    try:
+        import pymupdf
+        doc = pymupdf.open(pdf)
+        titles = {c["title"]: c["file"] for c in outline}
+        starts = sorted((t[2], titles[t[1]]) for t in doc.get_toc()
+                        if t[0] == 1 and t[1] in titles)
+        total = doc.page_count
+        doc.close()
+    except Exception:
+        return {}
+    out, cur = {}, None
+    for pg in range(1, total + 1):
+        for s, f in starts:
+            if s <= pg:
+                cur = f
+        out[str(pg)] = cur if (starts and pg >= starts[0][0]) else "front"
+    return out
+
+
 def state(name: str) -> dict:
     d = book_dir(name)
     book = json.loads((d / "book.json").read_text())
@@ -583,6 +645,7 @@ def state(name: str) -> dict:
         "chapters": chapters,
         "sizes": {c: len((d / c).read_text().strip()) for c in chapters},
         "shots": shots,
+        "pagemap": page_map(d, outline),
         "gate": gate,
         "fonts": {k: v["family"] for k, v in (book.get("fonts") or {}).items()},
         "steps": {
@@ -622,8 +685,10 @@ def run_script(name: str, cmd: str) -> dict:
         argv = [sys.executable, str(SKILL / "scripts/qc_gate.py"), str(d)]
     elif cmd == "sheet":
         pdf = next(iter(sorted((d / "final").glob("*.pdf"))), d / "draft/book.pdf")
+        for old in (d / "qc").glob("p*.png"):
+            old.unlink()  # 쪽수가 줄면 옛 이미지가 남아 검수 화면이 어긋난다
         argv = [sys.executable, str(SKILL / "scripts/contact_sheet.py"), str(pdf),
-                str(d / "qc"), "--dpi", "90", "--pages", "1,2,3,4,5,6"]
+                str(d / "qc"), "--dpi", "80"]  # --pages 없으면 전 지면
     else:
         raise ValueError("unknown cmd")
     p = subprocess.run(argv, capture_output=True, text=True, timeout=1800)
@@ -714,6 +779,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/file":
                 safe_file(data["name"], data["path"]).write_text(data["text"])
                 return self._json({"ok": True})
+            if u.path == "/api/meta":
+                d = book_dir(data["name"])
+                book = json.loads((d / "book.json").read_text())
+                for k in ("title", "subtitle", "author", "publisher", "date", "brand"):
+                    if k in data:
+                        v = (data[k] or "").strip()
+                        if k == "brand" and v and not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
+                            raise ValueError("브랜드색은 #rrggbb 형식이어야 합니다")
+                        if v:
+                            book[k] = v
+                        else:
+                            book.pop(k, None)
+                (d / "book.json").write_text(json.dumps(book, ensure_ascii=False, indent=2),
+                                             encoding="utf-8")
+                return self._json({"out": "책 정보 저장 — 표지·판권면에 반영하려면 다시 빌드하세요"})
             if u.path == "/api/outline":
                 return self._json(save_outline(data["name"], data.get("chapters") or []))
             if u.path == "/api/run":
