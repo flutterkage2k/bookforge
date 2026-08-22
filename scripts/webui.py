@@ -92,10 +92,10 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  .step small{color:var(--mute);font-size:11px}
  .step.on{border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft)}
  .step.done b::after{content:" ✓";color:var(--ok)}
- .booklist a{display:block;padding:7px 9px;border-radius:8px;color:var(--ink);
-   text-decoration:none;cursor:pointer;font-size:14px}
- .booklist a:hover{background:var(--bg)}
- .booklist a.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
+ .booklist button{display:block;width:100%;text-align:left;padding:7px 9px;border:0;
+   background:none;border-radius:8px;color:var(--ink);cursor:pointer;font-size:14px}
+ .booklist button:hover{background:var(--bg)}
+ .booklist button.on{background:var(--brand-soft);color:var(--brand);font-weight:600}
  label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
  input,select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
    font:inherit;background:#fff;color:var(--ink)}
@@ -118,10 +118,13 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  pre{margin:0;padding:10px;background:#0f1419;color:#d7dde5;border-radius:8px;
    font:12px/1.5 ui-monospace,monospace;max-height:220px;overflow:auto;white-space:pre-wrap}
  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
- .grid img{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff}
+ .grid img{width:100%;border:1px solid var(--line);border-radius:8px;background:#fff;display:block}
+ .thumb{padding:0;border:0;background:none;cursor:zoom-in;width:100%}
+ .thumb:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
  .styles{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px}
- .styles div{border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer}
- .styles div.on{border-color:var(--brand);background:var(--brand-soft)}
+ .styles button{border:1px solid var(--line);border-radius:10px;padding:10px;cursor:pointer;
+   background:#fff;text-align:left;font:inherit;color:inherit}
+ .styles button.on{border-color:var(--brand);background:var(--brand-soft)}
  .styles b{font-size:14px}.styles small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
  .styles{grid-template-columns:repeat(auto-fill,minmax(215px,1fr))}
  .samples{display:flex;gap:6px;margin-bottom:8px}
@@ -142,6 +145,13 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  .warnbox{margin:10px 0 0;padding:9px 10px;border:1px solid #f0b4ae;background:var(--bad-soft);
    color:var(--bad);border-radius:8px;font-size:12px;line-height:1.5}
  code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:13px}
+ #otbl{display:block;overflow-x:auto}          /* 목차 표가 좁은 창에서 삐져나오던 문제 */
+ header h1{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ @media (max-width:900px){
+   .wrap{flex-direction:column}
+   aside{width:auto;display:flex;gap:14px;flex-wrap:wrap}
+   aside .card{flex:1 1 240px}
+ }
 </style>
 <header>
   <h1>bookforge <span id=hbook>— 책을 고르거나 새로 만드세요</span></h1>
@@ -186,15 +196,18 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
   </div>
  </aside>
  <main>
-  <div class=steps id=steps></div>
+  <div class=steps id=steps role=list aria-label="작업 단계"></div>
   <div id=panel></div>
-  <div class=card><h2>실행 기록</h2><pre id=log>—</pre></div>
+  <div class=card><h2>실행 기록</h2><pre id=log role=status aria-live=polite>—</pre></div>
  </main>
 </div>
 <script>
 const $=i=>document.getElementById(i);
-const api=(u,d)=>fetch(u,d&&{method:'POST',body:JSON.stringify(d)}).then(r=>r.json());
-const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api=(u,d)=>fetch(u,d&&{method:'POST',body:JSON.stringify(d)})
+  .then(r=>r.json().catch(()=>({error:`서버가 ${r.status} 응답을 보냈습니다`})))
+  .catch(()=>({error:'서버에 연결할 수 없습니다. 터미널에서 서버가 살아 있는지 확인하세요.'}));
+const esc=s=>String(s??'').replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const STYLES=%STYLES%, LENGTHS=%LENGTHS%;
 let book=null, state=null, step=1, chap=null, newStyle='practical';
 
@@ -203,14 +216,15 @@ const STEPS=[
  ['자료','근거로 쓸 재료를 넣는다'],
  ['목차','장 구성을 정한다'],
  ['집필','장별 원고를 쓴다'],
- ['빌드·검사','PDF를 만들고 게이트를 돌린다'],
+ ['빌드·검사','PDF를 만들고 품질 검사를 돌린다'],
  ['검수','실제 지면을 눈으로 본다'],
 ];
 
 async function boot(){
   const b=await api('/api/books');
   $('books').innerHTML=(b.books||[]).map(n=>
-    `<a class="${n===book?'on':''}" onclick="open_('${n}')">${esc(n)}</a>`).join('')
+    `<button type=button class="${n===book?'on':''}" aria-current="${n===book}"
+       onclick="open_('${esc(n)}')">${esc(n)}</button>`).join('')
     || '<p class=muted>아직 책이 없습니다</p>';
 }
 async function open_(n){
@@ -305,12 +319,13 @@ const PANEL={
    <p class=hint style="margin:0 0 8px">아래는 각 스타일로 실제 만든 책의 표지와 본문 지면입니다.
      클릭해서 고르세요.</p>
    <div class=styles>${STYLES.map(s=>
-     `<div class="${s[0]===newStyle?'on':''}" onclick="pickStyle('${s[0]}')">
+     `<button type=button class="${s[0]===newStyle?'on':''}" aria-pressed="${s[0]===newStyle}"
+        onclick="pickStyle('${s[0]}')">
         <div class=samples>
-          <img src="/sample?style=${s[0]}&kind=cover" alt="${esc(s[1])} 표지">
-          <img src="/sample?style=${s[0]}&kind=page" alt="${esc(s[1])} 본문">
+          <img src="/sample?style=${s[0]}&kind=cover" alt="${esc(s[1])} 표지 견본">
+          <img src="/sample?style=${s[0]}&kind=page" alt="${esc(s[1])} 본문 견본">
         </div>
-        <b>${esc(s[1])}</b><small>${esc(s[2])}</small></div>`).join('')}</div>
+        <b>${esc(s[1])}</b><small>${esc(s[2])}</small></button>`).join('')}</div>
    <div class=row style="margin-top:14px"><button class=primary onclick=create()>만들기</button>
      <span class=muted>만들면 2단계(자료)로 넘어갑니다</span></div>
    <p class=hint style="margin-top:12px">책을 만든 뒤 2단계에 자료를 넣고, 어느 단계에서든
@@ -352,8 +367,9 @@ const PANEL={
    <p class=hint>마크다운으로 씁니다. 첫 줄은 <code># 장 제목</code>이고 목차의 제목과 같아야 합니다.</p>
    <div class=chaps>${state.chapters.map(c=>{
      const n=(state.sizes||{})[c]||0;
+     const un = dirty(c) ? ' •저장 안 됨' : '';
      return `<button class="${c===chap?'on':''}" onclick="pickChap('${c}')">
-       ${c.replace('chapters/','')} <span class=muted>${n<400?'미작성':n+'자'}</span></button>`;}).join('')
+       ${c.replace('chapters/','')} <span class=muted>${n<400?'미작성':n+'자'}${un}</span></button>`;}).join('')
      || '<span class=muted>3단계에서 목차를 먼저 저장하세요.</span>'}</div>
    <textarea id=ta4 rows=22></textarea>
    <div class=row style="margin-top:10px">
@@ -378,7 +394,8 @@ const PANEL={
  </div>`,
  5:()=>`<div class=card>
    <h2>빌드·검사</h2>
-   <p class=hint>빌드가 PDF를 만들고, 게이트가 검사를 돌립니다. 통과해야만 final 폴더에 PDF가 생깁니다.</p>
+   <p class=hint>빌드가 PDF를 만들고, <b>게이트</b>(조판 품질 검사 16종)가 검사를 돌립니다.
+     통과해야만 final 폴더에 PDF가 생깁니다.</p>
    <div class=row>
      <button class="${state.steps.built?'':'primary'}" onclick="run('build')">① 빌드</button>
      <button class="${state.steps.built&&!state.steps.passed?'primary':''}"
@@ -409,10 +426,11 @@ const PANEL={
      const src=(state.pagemap||{})[pg];
      const where = !src ? '' : src==='front'
        ? `<button onclick="go(1)">책 정보 고치기</button>`
-       : `<button onclick="pickChap('chapters/${src}');go(4)">${src} 고치기</button>`;
+       : `<button onclick="pickChap('chapters/${esc(src)}');go(4)">${esc(src)} 고치기</button>`;
      return `<figure style="margin:0">
-       <img src="/qc?name=${book}&page=${s}&t=${Date.now()}" loading=lazy
-            style="cursor:zoom-in" onclick="viewPage(${pg})" title="클릭하면 크게 봅니다">
+       <button type=button class=thumb onclick="viewPage(${pg})" title="${pg}쪽 크게 보기">
+         <img src="/qc?name=${book}&page=${s}&v=${state.sheet_ts||0}" loading=lazy
+              alt="${pg}쪽 지면"></button>
        <figcaption class=muted style="margin-top:4px">
          <div><b>${pg}쪽</b> ${src&&src!=='front'?src:'앞부속'}</div>
          <div style="margin-top:4px">${where}</div></figcaption></figure>`;}).join('')}</div>`
@@ -456,10 +474,14 @@ function viewPage(n){
     lb = document.createElement('div');
     lb.id = 'lb'; lb.className = 'lb';
     lb.onclick = e => { if (e.target === lb) closeView(); };
+    lb.setAttribute('role', 'dialog');
+    lb.setAttribute('aria-modal', 'true');
+    lb.tabIndex = -1;
     document.body.appendChild(lb);
     document.addEventListener('keydown', viewKeys);
   }
   drawView();
+  $('lb').focus();
 }
 function drawView(){
   const total = state.pages || (state.shots||[]).length;
@@ -489,9 +511,16 @@ function closeView(){
   if (lb) { lb.remove(); document.removeEventListener('keydown', viewKeys); }
 }
 function viewKeys(e){
-  if (e.key === 'Escape') closeView();
-  else if (e.key === 'ArrowRight') stepView(1);
-  else if (e.key === 'ArrowLeft') stepView(-1);
+  if (e.key === 'Escape') { closeView(); return; }
+  if (e.key === 'ArrowRight') { stepView(1); return; }
+  if (e.key === 'ArrowLeft') { stepView(-1); return; }
+  if (e.key === 'Tab') {   // 포커스가 뒤 화면으로 새지 않게 상단 바 안에서만 돈다
+    const btns = [...document.querySelectorAll('.lbbar button')];
+    if (!btns.length) return;
+    const i = btns.indexOf(document.activeElement);
+    const next = e.shiftKey ? (i <= 0 ? btns.length - 1 : i - 1) : (i < 0 || i === btns.length - 1 ? 0 : i + 1);
+    btns[next].focus(); e.preventDefault();
+  }
 }
 function gateTable(){
   const g=state.gate;
@@ -520,19 +549,36 @@ function collectOutline(){
 function addRow(){ state.outline=collectOutline(); state.outline.push({title:'',summary:'',toc_line:''}); render(); }
 function delRow(i){ state.outline=collectOutline(); state.outline.splice(i,1); render(); }
 function pickStyle(s){ newStyle=s; render(); }
-function pickChap(c){ chap=c; render(); }
+function pickChap(c){ chap=c; render(); }   // 편집 내용은 drafts에 남으니 경고가 필요 없다
 
+// 편집 중인 내용은 DOM이 아니라 여기 남는다 — render()가 innerHTML을 통째로 갈아끼우므로
+// textarea에만 두면 단계 이동·폴링 완료 때마다 디스크 내용으로 덮어써진다.
+const drafts={}, saved={};
+function key(path){ return book+'/'+path; }
+function dirty(path){
+  const k=key(path||chap||'research.md');
+  return k in drafts && drafts[k]!==saved[k];
+}
+function anyDirty(){ return Object.keys(drafts).some(k=>drafts[k]!==saved[k]); }
 async function loadFile(path,ta){
   if(!path) return;
-  const d=await api(`/api/file?name=${book}&path=${encodeURIComponent(path)}`);
-  const el=$(ta); if(el) el.value=d.text||'';
+  const el=$(ta); if(!el) return;
+  const k=key(path);
+  if(!(k in saved)){
+    const d=await api(`/api/file?name=${book}&path=${encodeURIComponent(path)}`);
+    saved[k]=d.text||''; if(!(k in drafts)) drafts[k]=saved[k];
+  }
+  el.value=drafts[k];
+  el.oninput=()=>{ drafts[k]=el.value; };
 }
+window.addEventListener('beforeunload', e=>{ if(anyDirty()){ e.preventDefault(); e.returnValue=''; } });
 async function loadChapter(){ loadFile(chap,'ta4'); }
 async function saveFile(path,ta){
   if(!path){ $('log').textContent='저장할 파일이 없습니다'; return; }
-  const r=await api('/api/file',{name:book,path,text:$(ta).value});
+  const el=$(ta);
+  const r=await api('/api/file',{name:book,path,text:el.value});
   $('log').textContent=r.ok?('저장됨: '+path):('실패: '+r.error);
-  if(r.ok) open_(book);
+  if(r.ok){ const k=key(path); saved[k]=el.value; drafts[k]=el.value; open_(book); }
 }
 async function saveOutline(){
   const r=await api('/api/outline',{name:book,chapters:collectOutline()});
@@ -545,9 +591,13 @@ async function create(){
   $('log').textContent=r.out||r.error;
   if(!r.error && r.code===0){ await boot(); await open_($('nname').value); go(2); }
 }
+function lockPanel(on){
+  document.querySelectorAll('#panel button, .steps button').forEach(b=>b.disabled=on);
+}
 async function run(cmd){
-  $('log').textContent='실행 중…';
-  const r=await api('/api/run',{name:book,cmd});
+  if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
+  $('log').textContent='실행 중…'; lockPanel(true);
+  const r=await api('/api/run',{name:book,cmd}).finally(()=>lockPanel(false));
   await open_(book);
   const [msg]=nextAction();
   $('log').textContent=(r.out||r.error)+'\n\n▶ 다음: '+msg;
@@ -555,21 +605,49 @@ async function run(cmd){
 }
 async function agent(task,target){
   if(!book){ $('log').textContent='먼저 책을 고르세요'; return; }
+  // AI 집필은 기존 원고를 통째로 갈아엎는다 — 되돌릴 방법이 UI에 없으므로 먼저 묻는다
+  const sizes=state.sizes||{};
+  const written=Object.entries(sizes).filter(([f,n])=>n>400);
+  if((task==='all'||task==='auto') && written.length &&
+     !confirm(`이미 쓴 장이 ${written.length}개 있습니다. AI가 전부 새로 씁니다(기존 원고는 사라집니다). 계속할까요?`)) return;
+  if(task==='chapter' && (sizes[target]||0)>400 &&
+     !confirm(`${target.replace('chapters/','')}에 이미 원고가 있습니다(${sizes[target]}자). 새로 씁니다. 계속할까요?`)) return;
   const r=await api('/api/agent',{name:book,task,target,
     web:$('useweb').checked, max_queries:+$('maxq').value||6});
   if(r.error){ $('log').textContent=r.error; return; }
   $('log').textContent='AI 작업 시작 — 창을 닫지 마세요…';
   poll();
 }
-let polling=false;
+let polling=false, pollFails=0;
+function elapsed(sec){
+  if(!sec) return '';
+  const m=Math.floor(sec/60), s=Math.floor(sec%60);
+  return m? `${m}분 ${s}초 경과` : `${s}초 경과`;
+}
 async function poll(){
-  if(polling) return; polling=true;
+  if(polling) return; polling=true; pollFails=0;
   const tick=async()=>{
     const j=await api('/api/job');
-    $('log').textContent=(j.running?'작업 중… ':'')+ (j.log||'');
-    if(j.running){ setTimeout(tick,2000); }
-    else{ polling=false; await open_(book);
-      const [msg]=nextAction(); $('log').textContent=(j.log||'')+'\n\n▶ 다음: '+msg; }
+    if(j.error){                       // 서버가 잠깐 안 붙어도 폴링을 끊지 않는다
+      pollFails++;
+      $('log').textContent=`서버 응답 없음 (${pollFails}회). 작업은 서버에서 계속되고 있을 수 있습니다.\n${j.error}`;
+      if(pollFails<20){ setTimeout(tick,3000); return; }
+      polling=false; return;
+    }
+    pollFails=0;
+    if(j.running){
+      const sec=j.started? (Date.now()/1000 - j.started):0;
+      $('log').textContent=`작업 중 — ${j.name} / ${j.task} · ${elapsed(sec)}\n`
+        + '중간에 멈추려면 서버를 띄운 터미널에서 Ctrl+C 하세요.\n\n'+(j.log||'');
+      setTimeout(tick,2000); return;
+    }
+    polling=false;
+    if(j.name && j.name!==book) book=j.name;   // 작업 중 다른 책을 눌렀어도 결과는 그 책 것이다
+    if(book) await open_(book);
+    const head = j.ok===false ? '✖ 실패했습니다. 아래 마지막 줄이 원인입니다.\n\n'
+                              : '';
+    const tail = j.ok===false ? '' : (state? '\n\n▶ 다음: '+nextAction()[0] : '');
+    $('log').textContent=head+(j.log||'')+tail;
   };
   tick();
 }
@@ -611,21 +689,25 @@ async function clearFont(){
   $('log').textContent=r.out||r.error; open_(book);
 }
 boot(); render(); loadDefaults().then(loadFonts);
-api('/api/job').then(j=>{ if(j.running) poll(); });
+api('/api/job').then(j=>{ if(j.running){ if(j.name) open_(j.name); poll(); } });
 </script>
 """
 
 _FONTS = {}
 # 자동 집필은 몇 분씩 걸린다 — 한 번에 하나만, 진행 상황은 폴링으로 본다.
-JOB = {"running": False, "name": "", "task": "", "log": "", "done": True}
+JOB = {"running": False, "name": "", "task": "", "log": "", "done": True,
+       "ok": True, "started": 0.0}
+import threading  # noqa: E402
+JOB_LOCK = threading.Lock()   # 확인과 갱신 사이에 다른 요청이 끼어들지 못하게
 
 
 def start_job(name: str, task: str, target: str | None,
               web: bool = False, max_queries: int = 6):
     """agent.py를 별도 스레드에서 돌린다. 서버는 응답을 막지 않는다."""
-    import threading
-    if JOB["running"]:
-        raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
+    with JOB_LOCK:
+        if JOB["running"]:
+            raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
+        JOB["running"] = True
     d = book_dir(name)
     if task not in ("research", "outline", "chapter", "all", "diagrams", "fix", "auto"):
         raise ValueError("unknown task")
@@ -635,17 +717,21 @@ def start_job(name: str, task: str, target: str | None,
         argv += ["--web", "--max-queries", str(max(1, min(12, int(max_queries)))),
                  "--today", datetime.date.today().isoformat()]
     if task == "chapter":
-        if not CHAPTER_RE.match((target or "").replace("chapters/", "")):
+        if not CHAPTER_RE.fullmatch((target or "").replace("chapters/", "")):
             raise ValueError("bad chapter file")
         argv.append(target.replace("chapters/", ""))
-    JOB.update({"running": True, "name": name, "task": task, "log": "시작…", "done": False})
+    import time
+    JOB.update({"name": name, "task": task, "log": "시작…", "done": False,
+                "ok": True, "started": time.time()})
 
     def run():
         try:
             p = subprocess.run(argv, capture_output=True, text=True, timeout=7200)
             JOB["log"] = (p.stdout + p.stderr).strip()[-4000:] or "(출력 없음)"
+            JOB["ok"] = p.returncode == 0
         except Exception as e:  # 타임아웃·실행 실패도 화면에 남긴다
             JOB["log"] = f"실패: {e}"
+            JOB["ok"] = False
         finally:
             JOB.update({"running": False, "done": True})
 
@@ -688,12 +774,21 @@ def books_root() -> Path:
     return ROOT
 
 
+def under_root(p: Path) -> Path:
+    """books 루트 밖을 가리키면 거부한다 — 이름 검사만으로는 심볼릭 링크를 못 막는다."""
+    rp = p.resolve()
+    if not rp.is_relative_to(books_root().resolve()):
+        raise ValueError("경로가 books 폴더 밖을 가리킵니다")
+    return rp
+
+
 def book_dir(name: str) -> Path:
-    if not NAME_RE.match(name or ""):
+    if not NAME_RE.fullmatch(name or ""):
         raise ValueError("bad book name")
     d = books_root() / name
     if not (d / "book.json").exists():
         raise ValueError("no such book")
+    under_root(d)
     return d
 
 
@@ -702,9 +797,9 @@ def safe_file(name: str, rel: str) -> Path:
     d = book_dir(name)
     rel = (rel or "").replace("\\", "/")
     if rel in EDITABLE:
-        return d / rel
-    if rel.startswith("chapters/") and CHAPTER_RE.match(rel.split("/", 1)[1]):
-        return d / rel
+        return under_root(d / rel)
+    if rel.startswith("chapters/") and CHAPTER_RE.fullmatch(rel.split("/", 1)[1]):
+        return under_root(d / rel)
     raise ValueError("path not allowed: " + rel)
 
 
@@ -771,7 +866,9 @@ def state(name: str) -> dict:
     chapters = sorted("chapters/" + p.name for p in (d / "chapters").glob("ch-*.md"))
     written = [c for c in chapters if len((d / c).read_text().strip()) > 400]
     research = d / "research.md"
-    shots = sorted(p.name for p in (d / "qc").glob("p*.png"))
+    shot_files = sorted((d / "qc").glob("p*.png"))
+    shots = [p.name for p in shot_files]
+    sheet_ts = int(max((p.stat().st_mtime for p in shot_files), default=0))
     gate = gate_summary(d)
     pmap = page_map(d, outline)
     # 빌드를 다시 하면 build.py가 final/을 지운다 — 그때 남아 있는 이전 게이트 결과는
@@ -789,6 +886,7 @@ def state(name: str) -> dict:
         "chapters": chapters,
         "sizes": {c: len((d / c).read_text().strip()) for c in chapters},
         "shots": shots,
+        "sheet_ts": sheet_ts,
         "pagemap": pmap,
         "pages": len(pmap),
         "gate": gate,
@@ -824,6 +922,11 @@ def save_outline(name: str, chapters: list) -> dict:
 
 def run_script(name: str, cmd: str) -> dict:
     d = book_dir(name)
+    with JOB_LOCK:   # 같은 책에 빌드가 두 개 붙으면 같은 PDF를 동시에 쓴다
+        if JOB["running"]:
+            raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
+        JOB.update({"running": True, "name": name, "task": cmd, "log": "실행 중…",
+                    "done": False, "ok": True})
     if cmd == "build":
         argv = [sys.executable, str(SKILL / "scripts/build.py"), str(d)]
     elif cmd == "qc":
@@ -836,13 +939,17 @@ def run_script(name: str, cmd: str) -> dict:
                 str(d / "qc"), "--dpi", "80"]  # --pages 없으면 전 지면
     else:
         raise ValueError("unknown cmd")
-    p = subprocess.run(argv, capture_output=True, text=True, timeout=1800)
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=1800)
+    finally:
+        JOB.update({"running": False, "done": True})
+    JOB["ok"] = p.returncode == 0
     return {"out": (p.stdout + p.stderr).strip() or "(출력 없음)", "code": p.returncode}
 
 
 def scaffold(data: dict) -> dict:
     name = data.get("name")
-    if not NAME_RE.match(name or ""):
+    if not NAME_RE.fullmatch(name or ""):
         raise ValueError("폴더 이름은 영문·숫자·-·_ 만 됩니다")
     if data.get("style") not in STYLES:
         raise ValueError("bad style")
@@ -868,10 +975,33 @@ def scaffold(data: dict) -> dict:
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    timeout = 30          # 본문을 안 보내고 붙잡는 연결이 스레드를 영구 점유하지 않게
+    MAX_BODY = 8 * 1024 * 1024
+
+    def _local_only(self) -> bool:
+        """브라우저가 연 다른 사이트가 이 서버를 조작하거나 읽지 못하게 막는다.
+
+        - Origin: 다른 출처의 fetch(POST)는 응답을 못 읽어도 부작용은 일어난다(CSRF).
+        - Host: 공격자 도메인이 127.0.0.1로 재바인딩되면 same-origin이 되어 원고를 읽을 수 있다.
+        """
+        port = self.server.server_address[1]
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"}
+        host = (self.headers.get("Host") or "").strip()
+        if host and host not in allowed:
+            return False
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            netloc = urllib.parse.urlparse(origin).netloc
+            if netloc not in allowed:
+                return False
+        return True
+
     def _send(self, code, ctype, body: bytes):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -905,6 +1035,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                    json.dumps(obj, ensure_ascii=False).encode())
 
     def do_GET(self):
+        if not self._local_only():
+            return self._send(403, "text/plain; charset=utf-8",
+                              "이 서버는 이 컴퓨터에서만 씁니다".encode())
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         one = lambda k: (q.get(k) or [""])[0]
@@ -987,9 +1120,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json({"error": str(e)}, 400)
 
     def do_POST(self):
+        if not self._local_only():
+            return self._send(403, "text/plain; charset=utf-8",
+                              "이 서버는 이 컴퓨터에서만 씁니다".encode())
         u = urllib.parse.urlparse(self.path)
         try:
             n = int(self.headers.get("Content-Length") or 0)
+            if n > self.MAX_BODY:
+                return self._send(413, "text/plain; charset=utf-8", "본문이 너무 큽니다".encode())
             data = json.loads(self.rfile.read(n) or b"{}")
             if u.path == "/api/file":
                 safe_file(data["name"], data["path"]).write_text(data["text"])
@@ -1023,6 +1161,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/font":
                 d = book_dir(data["name"])
                 argv = [sys.executable, str(SKILL / "scripts/fontpick.py"), "set", str(d)]
+                if not data.get("clear") and data.get("lang") not in fontpick.SAMPLES:
+                    raise ValueError("bad lang")
                 argv += ["--clear"] if data.get("clear") else [f"--{data['lang']}", data["family"]]
                 p = subprocess.run(argv, capture_output=True, text=True, timeout=300)
                 return self._json({"out": (p.stdout + p.stderr).strip(), "code": p.returncode})

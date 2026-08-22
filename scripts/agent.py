@@ -88,6 +88,24 @@ def claude(prompt: str, timeout: int = 900, tools: str | None = None) -> str:
     return out
 
 
+CH_FILE_RE = re.compile(r"^ch-[0-9]{2,3}\.md$")
+
+
+def safe_chapter(book_dir: Path, filename: str) -> Path:
+    """장 파일 경로 — outline.json이나 모델 응답에서 온 이름은 검증 없이 쓰지 않는다.
+
+    outline.json은 웹 UI에서 편집 가능하고 도해 계획(figs[].file)은 모델이 만든다.
+    둘 중 하나만 오염돼도 ../.. 로 책 폴더 밖에 파일을 쓸 수 있었다.
+    """
+    name = (filename or "").strip().replace("chapters/", "")
+    if not CH_FILE_RE.fullmatch(name):
+        die(f"장 파일 이름이 규칙(ch-NN.md)에 맞지 않습니다: {filename!r}")
+    p = (book_dir / "chapters" / name).resolve()
+    if not p.is_relative_to(book_dir.resolve()):
+        die(f"책 폴더 밖을 가리킵니다: {filename!r}")
+    return p
+
+
 def load(book_dir: Path):
     book = json.loads((book_dir / "book.json").read_text(encoding="utf-8"))
     style = book.get("style", "practical")
@@ -233,7 +251,7 @@ def cmd_outline(book_dir: Path):
         rows.append({"file": f, "title": title,
                      "summary": (c.get("summary") or "").strip(),
                      "toc_line": (c.get("toc_line") or "").strip()})
-        p = book_dir / "chapters" / f
+        p = safe_chapter(book_dir, f)
         if not p.exists():
             p.write_text(f"# {title}\n\n", encoding="utf-8")
             made.append(f)
@@ -279,7 +297,7 @@ def cmd_chapter(book_dir: Path, filename: str):
     first = text.splitlines()[0].strip()
     if first[2:].strip() != ch["title"]:
         text = f"# {ch['title']}\n" + "\n".join(text.splitlines()[1:])
-    (book_dir / "chapters" / filename).write_text(text.rstrip() + "\n", encoding="utf-8")
+    safe_chapter(book_dir, filename).write_text(text.rstrip() + "\n", encoding="utf-8")
     print(f"OK chapter: {filename} ({len(text)}자)")
 
 
@@ -378,7 +396,7 @@ def _fix_plan(book_dir: Path, style: str) -> list:
             add(int(m.group(1)), 3, f"면 끝에 제목이 홀로 남음({v[:40]})")
     out = []
     for f, (d, why) in plan.items():
-        cur = len((book_dir / "chapters" / f).read_text(encoding="utf-8"))
+        cur = len(safe_chapter(book_dir, f).read_text(encoding="utf-8"))
         d = int(max(-0.3 * cur, min(0.3 * cur, d)))  # 한 회차에 ±30%까지만 — 3배로 부푸는 사고 방지
         if abs(d) >= 30:
             out.append((f, d, why))
@@ -424,7 +442,7 @@ def cmd_fix(book_dir: Path, rounds: int):
                 "G10(수치 날조)은 콜아웃의 숫자를 본문에도 넣거나 콜아웃에서 지우세요.")
         def fix_one(item):
             f, delta, why = item
-            path = book_dir / "chapters" / f
+            path = safe_chapter(book_dir, f)
             text = path.read_text(encoding="utf-8")
             verb = f"약 {delta}자 늘려" if delta > 0 else f"약 {abs(delta)}자 줄여"
             prompt = f"""아래는 한국어 단행본의 한 장이다. 조판 결과 다음 문제가 생겼다.
@@ -480,7 +498,7 @@ def _diagram_plan(book_dir: Path, style: str, limit: int) -> list:
     outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
     digest = []
     for c in outline:
-        p = book_dir / "chapters" / c["file"]
+        p = safe_chapter(book_dir, c["file"])
         if p.exists():
             digest.append(f"### {c['file']} — {c['title']}\n" + p.read_text(encoding="utf-8")[:1200])
     prompt = f"""아래는 한국어 단행본의 각 장 앞부분이다. 그림(도해)이 실제로 이해를 돕는 자리를
@@ -570,9 +588,16 @@ def _make_authored(book_dir: Path, fig: dict, name: str, width: str, vbmax: int,
     return "authored"
 
 
-def _insert_ref(book_dir: Path, fig: dict, name: str) -> bool:
-    """본문에 이미지 참조를 단독 문단으로 끼운다(G0: 텍스트와 섞이면 실패)."""
-    p = book_dir / "chapters" / fig["file"]
+def _insert_ref(book_dir: Path, fig: dict, name: str, allowed: set) -> bool:
+    """본문에 이미지 참조를 단독 문단으로 끼운다(G0: 텍스트와 섞이면 실패).
+
+    fig["file"]은 모델이 만든 값이다 — 목차에 실재하는 장만 허용한다.
+    """
+    f = (fig.get("file") or "").replace("chapters/", "")
+    if f not in allowed:
+        print(f"  건너뜀: 목차에 없는 장 {f!r}")
+        return False
+    p = safe_chapter(book_dir, f)
     if not p.exists():
         return False
     text = p.read_text(encoding="utf-8")
@@ -606,6 +631,8 @@ def cmd_diagrams(book_dir: Path, limit: int):
     dg = tokens.get("diagram") or die(f"{style} 스타일은 도해를 지원하지 않습니다")
     (book_dir / "diagrams").mkdir(exist_ok=True)
     plan = _diagram_plan(book_dir, style, limit)
+    allowed_files = {c["file"] for c in
+                     json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]}
     if not plan:
         print("도해가 필요한 자리를 찾지 못했습니다.")
         return
@@ -632,7 +659,7 @@ def cmd_diagrams(book_dir: Path, limit: int):
                                env={**os.environ, "NODE_PATH": subprocess.run(
                                    ["npm", "root", "-g"], capture_output=True, text=True).stdout.strip()})
             if r.returncode == 0:
-                if _insert_ref(book_dir, fig, name):
+                if _insert_ref(book_dir, fig, name, allowed_files):
                     made.append(f"{name} ({fig['file']}, {fig.get('track')}) — {fig['title']}")
                 break
             err = (r.stderr or r.stdout).strip().splitlines()[-1][:300]
@@ -690,10 +717,13 @@ def demo():
         d = Path(tmp); (d / "chapters").mkdir()
         ch = d / "chapters" / "ch-01.md"
         ch.write_text("# 제목\n\n앵커 문장이다.\n\n## 절1\n\n본문\n\n## 요점\n\n끝\n")
-        assert _insert_ref(d, {"file": "ch-01.md", "title": "그림", "anchor": "앵커 문장이다."}, "fig-01")
+        ok = {"ch-01.md"}
+        assert _insert_ref(d, {"file": "ch-01.md", "title": "그림", "anchor": "앵커 문장이다."}, "fig-01", ok)
         body = ch.read_text()
         assert "앵커 문장이다.\n\n![그림](../assets/fig-01.svg" in body, body
-        assert _insert_ref(d, {"file": "ch-01.md", "title": "둘", "anchor": "없는 문장"}, "fig-02")
+        assert _insert_ref(d, {"file": "ch-01.md", "title": "둘", "anchor": "없는 문장"}, "fig-02", ok)
+        assert not _insert_ref(d, {"file": "../../evil.md", "title": "x"}, "fig-03", ok), \
+            "목차 밖 경로를 허용했다"
         body = ch.read_text()
         assert body.index("![둘]") < body.index("## 요점"), "마지막 절 앞에 들어가야 한다"
     import tempfile
