@@ -41,6 +41,14 @@ ROOT = Path("books")
 
 from gatehelp import lookup as gate_lookup, AUTOFIX_CODES, TOOL  # noqa: E402
 
+# 오류 신고 창구. GitHub Issues를 1차로 두는 이유는 비밀값이 필요 없어서다 —
+# 텔레그램·슬랙·디스코드는 보내는 쪽에 봇 토큰/웹훅이 있어야 하는데, 이 서버의 소스는
+# 공개 저장소에 있으므로 토큰을 넣는 순간 누구나 그 채널에 쏠 수 있게 된다.
+# 이슈는 공개다. 원고 일부가 실리므로 보내기 전에 무엇이 나가는지 반드시 보여준다.
+REPORT_REPO = "flutterkage2k/bookforge"
+REPORT_MAIL = "flutterkage2k@gmail.com"
+URL_BODY_MAX = 4000   # 프리필 URL이 길면 브라우저·GitHub 양쪽에서 잘린다
+
 
 PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -95,6 +103,13 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
    border-left:3px solid var(--brand);border-radius:8px;background:var(--panel)}
  .verdict p{margin:0 0 8px}
  .verdict button{margin-right:8px}
+ .repbox{background:var(--panel);border-radius:10px;padding:16px;max-width:900px;
+   width:92vw;max-height:82vh;display:flex;flex-direction:column;gap:10px}
+ .repbox .warn{margin:0;padding:10px 12px;border-radius:8px;
+   background:var(--bad-soft);color:var(--bad)}
+ .reptext{flex:1;min-height:40vh;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+   line-height:1.5;border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical}
+ .repbtns{display:flex;gap:8px;flex-wrap:wrap}
  table{width:100%;border-collapse:collapse;font-size:13px}
  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
  th{color:var(--mute);font-weight:600}
@@ -531,11 +546,44 @@ function gateTable(){
 }
 // 실패했을 때 "그래서 내가 뭘 해야 하나"에 한 문단으로 답한다. 이게 없으면 화면이
 // 막다른 길이 된다 — 코드만 빨갛게 뜨고, 맡기기를 눌러야 할지 아닌지 알 수 없다.
+// 오류 신고 — 보내기 전에 나가는 내용을 통째로 보여준다. GitHub 이슈는 공개라
+// 원고 일부가 그대로 공개되기 때문이다. 비공개가 필요하면 메일 쪽을 쓰게 한다.
 async function saveReport(){
   const r=await api('/api/report',{name:book});
   if(r.error){ alert(r.error); return; }
-  alert('저장했습니다.\n\n'+r.path+'\n\n이 파일 하나만 전달하면 됩니다. 원고 전문은 들어 있지 않습니다.');
+  let lb=$('rep');
+  if(!lb){
+    lb=document.createElement('div'); lb.id='rep'; lb.className='lb';
+    lb.onclick=e=>{ if(e.target===lb) closeReport(); };
+    lb.setAttribute('role','dialog'); lb.setAttribute('aria-modal','true'); lb.tabIndex=-1;
+    document.body.appendChild(lb);
+    document.addEventListener('keydown', repKeys);
+  }
+  lb.innerHTML=`
+    <div class=lbbar>
+      <b>오류 신고</b>
+      <span class=muted>아래 내용이 그대로 전송됩니다</span>
+      <span style="flex:1"></span>
+      <button onclick="closeReport()">닫기 (Esc)</button>
+    </div>
+    <div class=repbox>
+      <p class=warn><b>GitHub 이슈는 공개입니다.</b> 아래에 원고 일부가 들어 있습니다.
+        공개하기 곤란한 원고라면 <b>메일로 보내기</b>를 쓰세요.</p>
+      <textarea readonly class=reptext>${esc(r.text)}</textarea>
+      <p class=muted>파일로도 저장했습니다: <code>${esc(r.path)}</code></p>
+      <div class=repbtns>
+        <button class=primary onclick="window.open('${esc(r.issue)}','_blank','noopener')">GitHub 이슈로 신고</button>
+        <button onclick="location.href='${esc(r.mail)}'">메일로 보내기 (비공개)</button>
+        <button onclick="navigator.clipboard.writeText(document.querySelector('.reptext').value)">내용 복사</button>
+      </div>
+    </div>`;
+  lb.focus();
 }
+function closeReport(){
+  const lb=$('rep');
+  if(lb){ lb.remove(); document.removeEventListener('keydown', repKeys); }
+}
+function repKeys(e){ if(e.key==='Escape') closeReport(); }
 function verdict(g){
   if(g.stale || g.pass) return '';
   const a=g.autofix||[], m=g.manual||[], t=g.toolbug||[];
@@ -545,8 +593,8 @@ function verdict(g){
   if(m.length) L.push(`<b>${m.join(', ')}</b> — 맡기기로는 안 됩니다. 아래 표의 「할 일」대로 직접 손봐야 합니다.`);
   if(t.length) L.push(`<b>${t.join(', ')}</b> — 이 도구의 결함입니다. 원고를 고쳐도 없어지지 않습니다.`);
   return `<div class="verdict">${L.map(x=>`<p>${x}</p>`).join('')}
-    <button onclick="saveReport()">실패 정보 저장</button>
-    <span class=muted>재현에 필요한 정보를 파일 하나로 묶습니다. 개발자에게 그 파일만 주면 됩니다.</span>
+    <button onclick="saveReport()">오류 신고</button>
+    <span class=muted>보낼 내용을 먼저 보여줍니다. GitHub 이슈(공개) 또는 메일(비공개) 중에 고르세요.</span>
   </div>`;
 }
 function orow(c,i){
@@ -856,6 +904,13 @@ def gate_summary(d: Path) -> dict | None:
             "autofix": [i["code"] for i in fails if i["auto"]],
             "manual": [i["code"] for i in fails if not i["auto"]],
             "toolbug": [i["code"] for i in fails if i["owner"] == TOOL]}
+
+
+
+def failed_codes(d: Path) -> list[str]:
+    report = json.loads((d / "gate-report.json").read_text())
+    return sorted(c for c, v in (report.get("gates") or {}).items()
+                  if isinstance(v, dict) and v.get("ok") is False)
 
 
 def failure_report(d: Path) -> Path:
@@ -1257,7 +1312,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 d = book_dir(data["name"])
                 if not (d / "gate-report.json").exists():
                     return self._json({"error": "검사 결과가 없습니다. 먼저 ② 게이트를 누르세요."})
-                return self._json({"path": str(failure_report(d))})
+                path = failure_report(d)
+                text = path.read_text(encoding="utf-8")
+                codes = ", ".join(failed_codes(d)) or "게이트 실패"
+                title = f"[{codes}] {json.loads((d / 'book.json').read_text()).get('style')} 스타일에서 실패"
+                body = text if len(text) <= URL_BODY_MAX else (
+                    text[:URL_BODY_MAX] + "\n\n(이하 생략 — failure-report.md 파일을 첨부해 주세요)")
+                q = urllib.parse.urlencode({"title": title, "body": body})
+                return self._json({
+                    "path": str(path), "text": text, "title": title,
+                    "issue": f"https://github.com/{REPORT_REPO}/issues/new?{q}",
+                    "mail": "mailto:" + REPORT_MAIL + "?" + urllib.parse.urlencode(
+                        {"subject": title, "body": body}),
+                })
             if u.path == "/api/meta":
                 d = book_dir(data["name"])
                 book = json.loads((d / "book.json").read_text())
