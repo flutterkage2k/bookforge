@@ -517,11 +517,20 @@ def cmd_fix(book_dir: Path, rounds: int):
         if not plan:
             codes = sorted({re.match(r"FAIL ([A-Z0-9-]+)", f).group(1)
                             for f in fails if re.match(r"FAIL ([A-Z0-9-]+)", f)})
-            die("이 실패는 원고 분량 조절로 고칠 수 없습니다: " + ", ".join(codes) + "\n"
-                + "\n".join(fails) + "\n\n"
-                "G3(판면 밖 넘침)은 표가 너무 넓거나 긴 코드·URL이 원인입니다 — 그 표의 열을 줄이세요.\n"
-                "G14-C(대비)·G2(폰트)는 원고가 아니라 스타일 설정 문제입니다.\n"
-                "G10(수치 날조)은 콜아웃의 숫자를 본문에도 넣거나 콜아웃에서 지우세요.")
+            from gatehelp import lookup as gate_lookup, TOOL, AUTOFIX_CODES
+            lines = ["이 실패는 자동 수정 대상이 아닙니다: " + ", ".join(codes), ""]
+            lines += fails
+            lines.append("")
+            for c in codes:
+                what, fix, own, _ = gate_lookup(c)
+                lines.append(f"{c} [{own}] {what} — {fix}")
+            if any(gate_lookup(c)[2] == TOOL for c in codes):
+                lines.append("")
+                lines.append("'도구'로 표시된 것은 원고를 고쳐도 없어지지 않습니다. "
+                             "웹 UI 5단계의 「실패 정보 저장」으로 파일을 만들어 개발자에게 주세요.")
+            lines.append("")
+            lines.append("자동 수정이 손댈 수 있는 코드: " + ", ".join(AUTOFIX_CODES))
+            die("\n".join(lines))
         def fix_one(item):
             f, delta, why, score = item
             path = safe_chapter(book_dir, f)

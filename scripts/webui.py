@@ -39,30 +39,8 @@ SAMPLES = {
 }
 ROOT = Path("books")
 
-# 게이트 코드 → (무엇을 봤는가, 떨어졌을 때 할 일). qc_gate.py의 판정 기준을 사람 말로 옮긴 것.
-GATE_HELP = {
-    "G0": ("도해 SVG 원본 검사", "도해 파일에 외부 링크·빈 텍스트가 없는지 확인하세요."),
-    "G1": ("렌더 성공·판형·분량", "쪽수가 범위를 벗어나면 경고만 납니다. 원고를 늘리거나 줄이세요."),
-    "G2": ("폰트 임베드·Type3 0건", "otf 폰트가 원인입니다. ttf로 바꾸세요(scripts/convert_fonts.py)."),
-    "G3": ("글자가 판면 밖으로 나갔는지", "표가 너무 넓거나 긴 단어가 원인입니다. 줄이세요."),
-    "G4": ("목차·북마크가 실제 쪽과 맞는지", "빌드를 다시 하세요. 계속 어긋나면 목차 제목과 장 제목을 맞추세요."),
-    "G7-TAIL": ("장 마지막 면이 너무 비었는지", "그 장 본문을 3~5줄 단위로 늘리거나 줄이세요."),
-    "G7-MID": ("장 중간 면이 비었는지", "표·콜아웃이 다음 면으로 밀려 생긴 구멍입니다. 앞 문단을 조절하세요."),
-    "G7-DOC": ("책 전체 꼬리 면 평균", "여러 장의 끝 면이 얕습니다. 장별 분량을 다시 설계하세요."),
-    "G7-FRAME": ("판면 좌표 드리프트", "본문 첫 요소가 이미지면 문단을 먼저 두세요."),
-    "G7-BLANK": ("의도치 않은 빈 면", "빈 면을 만든 블록을 앞뒤로 옮기세요."),
-    "G8": ("여백으로 억지로 채웠는지", "짧은 불릿·잦은 소제목이 원인입니다. 문장으로 합치거나 절을 병합하세요."),
-    "G9": ("면 끝 제목 고립·widow", "제목이 면 끝에 홀로 남았습니다. 앞 문단을 늘려 밀어내세요."),
-    "G10": ("콜아웃 수치가 본문에 실재하는지", "박스에만 있는 숫자는 금지입니다. 본문에도 그 수치를 쓰세요."),
-    "G11": ("여백 사유 코드 무결성", "pageroles.json 선언과 실제 지면이 다릅니다."),
-    "G12": ("장 앞 빈 면", "인쇄용 백면은 전자책에서 금지입니다."),
-    "G13": ("도해 글자가 PDF에 실재하는지", "도해 변환에서 글자가 빠졌습니다. 도해를 다시 렌더하세요."),
-    "G14-A": ("목차 쪽번호 ↔ 실제 폴리오", "빌드를 다시 하세요."),
-    "G14-B": ("목차 색 ↔ 장 도비라 색", "스타일 색 설정을 확인하세요."),
-    "G14-C": ("글자 대비(WCAG)", "배경 위 글자색이 너무 옅습니다."),
-    "G15-PARA": ("문단 길이 상한", "한 문단이 깁니다. 8행 이내로 끊으세요."),
-    "G15-RHYTHM": ("시각 요소 없는 연속 면", "표·도해·콜아웃을 3면마다 하나씩 넣으세요."),
-}
+from gatehelp import lookup as gate_lookup, AUTOFIX_CODES, TOOL  # noqa: E402
+
 
 PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
@@ -110,6 +88,13 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
  .pill.ok{background:var(--ok-soft);color:var(--ok)}
  .pill.bad{background:var(--bad-soft);color:var(--bad)}
  .pill.idle{background:var(--bg);color:var(--mute)}
+ .pill.own-ms{background:var(--brand-soft);color:var(--brand)}
+ .pill.own-st{background:#fff4e5;color:#9a5b00}
+ .pill.own-tool{background:var(--bad-soft);color:var(--bad)}
+ .verdict{margin:10px 0 14px;padding:12px 14px;border:1px solid var(--line);
+   border-left:3px solid var(--brand);border-radius:8px;background:var(--panel)}
+ .verdict p{margin:0 0 8px}
+ .verdict button{margin-right:8px}
  table{width:100%;border-collapse:collapse;font-size:13px}
  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
  th{color:var(--mute);font-weight:600}
@@ -531,15 +516,38 @@ function viewKeys(e){
 function gateTable(){
   const g=state.gate;
   if(!g) return '<p class=muted style="margin-top:14px">아직 검사 결과가 없습니다.</p>';
+  const OWN={'원고':'own-ms','스타일':'own-st','도구':'own-tool'};
   const rows=g.items.map(it=>`<tr>
     <td><span class="pill ${it.ok?'ok':'bad'}">${it.code}</span></td>
+    <td>${it.ok?'':`<span class="pill ${OWN[it.owner]||''}">${esc(it.owner)}</span>`}</td>
     <td>${esc(it.what)}${it.ok?'':`<div class=muted>${esc(it.detail||'')}</div>`}</td>
     <td class=muted>${it.ok?'':esc(it.fix)}</td></tr>`).join('');
   return `<p style="margin:14px 0 6px">
     <span class="pill ${g.stale?'idle':(g.pass?'ok':'bad')}">${
       g.stale?'이전 결과(다시 검사 필요)':(g.pass?'통과':'실패')}</span>
     <span class=muted> · ${g.pages}쪽 · 권장 ${g.range[0]}~${g.range[1]}쪽</span></p>
-    <table><thead><tr><th>검사</th><th>무엇을 봤나</th><th>실패 시 할 일</th></tr></thead><tbody>${rows}</tbody></table>`;
+    ${verdict(g)}
+    <table><thead><tr><th>검사</th><th>누구 문제</th><th>무엇을 봤나</th><th>실패 시 할 일</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+// 실패했을 때 "그래서 내가 뭘 해야 하나"에 한 문단으로 답한다. 이게 없으면 화면이
+// 막다른 길이 된다 — 코드만 빨갛게 뜨고, 맡기기를 눌러야 할지 아닌지 알 수 없다.
+async function saveReport(){
+  const r=await api('/api/report',{name:book});
+  if(r.error){ alert(r.error); return; }
+  alert('저장했습니다.\n\n'+r.path+'\n\n이 파일 하나만 전달하면 됩니다. 원고 전문은 들어 있지 않습니다.');
+}
+function verdict(g){
+  if(g.stale || g.pass) return '';
+  const a=g.autofix||[], m=g.manual||[], t=g.toolbug||[];
+  if(!a.length && !m.length) return '';
+  const L=[];
+  if(a.length) L.push(`<b>${a.join(', ')}</b> — 「AI에게 게이트 통과까지 맡기기」가 고칠 수 있습니다.`);
+  if(m.length) L.push(`<b>${m.join(', ')}</b> — 맡기기로는 안 됩니다. 아래 표의 「할 일」대로 직접 손봐야 합니다.`);
+  if(t.length) L.push(`<b>${t.join(', ')}</b> — 이 도구의 결함입니다. 원고를 고쳐도 없어지지 않습니다.`);
+  return `<div class="verdict">${L.map(x=>`<p>${x}</p>`).join('')}
+    <button onclick="saveReport()">실패 정보 저장</button>
+    <span class=muted>재현에 필요한 정보를 파일 하나로 묶습니다. 개발자에게 그 파일만 주면 됩니다.</span>
+  </div>`;
 }
 function orow(c,i){
   return `<tr data-i="${i}">
@@ -826,8 +834,7 @@ def gate_summary(d: Path) -> dict | None:
     for code, val in (g.get("gates") or {}).items():
         if not isinstance(val, dict):
             continue
-        what, fix = (GATE_HELP.get(code) or GATE_HELP.get(code.split("-")[0])
-                     or (code, "qc_gate.py 출력을 확인하세요."))
+        what, fix, owner, auto = gate_lookup(code)
         detail = ""
         for key in ("problems", "overflows", "mismatches", "violations", "stretched",
                     "not_embedded", "type3_pages", "blank_pages", "parity_filler", "tails"):
@@ -838,11 +845,106 @@ def gate_summary(d: Path) -> dict | None:
         if not detail and val.get("ok") is False:
             detail = str({k: v for k, v in val.items() if k != "ok"})[:160]
         items.append({"code": code, "ok": bool(val.get("ok", True)),
-                      "what": what, "fix": fix, "detail": detail})
+                      "what": what, "fix": fix, "owner": owner, "auto": auto,
+                      "detail": detail})
     items.sort(key=lambda x: (x["ok"], x["code"]))
     g1 = (g.get("gates") or {}).get("G1", {})
+    fails = [i for i in items if not i["ok"]]
     return {"pass": bool(g.get("pass")), "pages": g1.get("pages"),
-            "range": g1.get("range") or [0, 0], "items": items}
+            "range": g1.get("range") or [0, 0], "items": items,
+            # 화면이 "맡기기를 눌러도 되는가"에 답하려면 실패 코드의 성격이 필요하다
+            "autofix": [i["code"] for i in fails if i["auto"]],
+            "manual": [i["code"] for i in fails if not i["auto"]],
+            "toolbug": [i["code"] for i in fails if i["owner"] == TOOL]}
+
+
+def failure_report(d: Path) -> Path:
+    """재현에 필요한 것만 파일 하나로 묶는다 — 원고 전문은 넣지 않는다.
+
+    화면이 "개발자에게 이걸 주세요"라고 말하려면 그 '이것'이 실재해야 한다.
+    실패한 게이트의 판정 근거, 스타일, 도구 버전, 그리고 지목된 원고의 해당 부분만.
+    """
+    import platform
+    import shutil as _sh
+    import subprocess as _sp
+
+    report = json.loads((d / "gate-report.json").read_text())
+    book = json.loads((d / "book.json").read_text())
+    fails = [(c, v) for c, v in (report.get("gates") or {}).items()
+             if isinstance(v, dict) and v.get("ok") is False]
+
+    def ver(exe, *args):
+        path = _sh.which(exe)
+        if not path:
+            return "없음"
+        try:
+            r = _sp.run([path, *args], capture_output=True, text=True, timeout=20)
+            return (r.stdout or r.stderr).strip().splitlines()[0][:60]
+        except Exception:
+            return "확인 실패"
+
+    L = [f"# 실패 정보 — {book.get('title') or d.name}", ""]
+    L.append(f"- 스타일: `{book.get('style')}`")
+    pages = (report.get("gates") or {}).get("G1", {}).get("pages")
+    # 렌더 전 게이트(G0·G10·G15-PARA)에서 떨어지면 G1이 아예 없다 — None을 그대로 찍지 않는다
+    L.append(f"- 쪽수: {pages if pages else '렌더 전 단계에서 중단'}")
+    L.append(f"- 폰트 지정: `{json.dumps(book.get('fonts') or {}, ensure_ascii=False)}`")
+    L.append("")
+    L.append("## 실패한 검사")
+    L.append("")
+    L.append("| 코드 | 누구 문제 | 자동수정 | 판정 근거 |")
+    L.append("|---|---|---|---|")
+    for code, val in fails:
+        _, _, own, auto = gate_lookup(code)
+        detail = json.dumps({k: v for k, v in val.items() if k != "ok"},
+                            ensure_ascii=False)[:300].replace("|", "\\|")
+        L.append(f"| {code} | {own} | {'가능' if auto else '불가'} | `{detail}` |")
+    L.append("")
+
+    # 게이트가 원고를 지목했다면 그 부분만 옮긴다 (전문 유출 방지)
+    quoted = []
+    for code, val in fails:
+        for prob in (val.get("problems") or [])[:5]:
+            m = re.search(r"(ch-\d+\.md)", str(prob))
+            if not m:
+                continue
+            f = d / "chapters" / m.group(1)
+            if not f.exists():
+                continue
+            # 게이트 메시지의 따옴표 안 토큰을 원고에서 찾아 그 언저리만 뜬다.
+            # 못 찾으면 장 첫머리를 뜨는데, 그건 지목된 자리가 아니라 도움이 안 된다.
+            body = f.read_text(encoding="utf-8")
+            i = -1
+            for token in re.findall(r"'([^']{2,40}?)…?'", str(prob)):
+                i = body.find(token)
+                if i >= 0:
+                    break
+            excerpt = body[max(0, i - 120):i + 400] if i >= 0 else body[:400]
+            quoted.append((code, m.group(1), excerpt.strip()))
+    if quoted:
+        L.append("## 지목된 원고 부분")
+        L.append("")
+        for code, name, excerpt in quoted[:5]:
+            L.append(f"**{code} — `{name}`**")
+            L.append("")
+            L.append("```")
+            L.append(excerpt)
+            L.append("```")
+            L.append("")
+
+    L.append("## 환경")
+    L.append("")
+    L.append(f"- OS: {platform.platform()}")
+    L.append(f"- Python: {platform.python_version()}")
+    L.append(f"- Typst: {ver('typst', '--version')}")
+    L.append(f"- Node: {ver('node', '--version')}")
+    L.append(f"- claude: {ver('claude', '--version')}")
+    L.append("")
+    L.append("이 파일에는 원고 전문이 들어 있지 않습니다. 게이트가 지목한 부분만 옮겼습니다.")
+
+    out = d / "failure-report.md"
+    out.write_text("\n".join(L) + "\n", encoding="utf-8")
+    return out
 
 
 def page_map(d: Path, outline: list) -> dict:
@@ -1151,6 +1253,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if u.path == "/api/settings":
                 return self._json(save_settings(data))
+            if u.path == "/api/report":
+                d = book_dir(data["name"])
+                if not (d / "gate-report.json").exists():
+                    return self._json({"error": "검사 결과가 없습니다. 먼저 ② 게이트를 누르세요."})
+                return self._json({"path": str(failure_report(d))})
             if u.path == "/api/meta":
                 d = book_dir(data["name"])
                 book = json.loads((d / "book.json").read_text())
