@@ -1,5 +1,5 @@
 // bookforge style: essay — 미니멀 에세이 (STYLE.md: 사륙판 128×188, 먹1도+포인트1색)
-#import "base.typ": code-theme, default-tokens, keep-words, numpad, chapter-state, lang-fonts
+#import "base.typ": code-theme, colophon-fonts, opt, default-tokens, keep-words, numpad, chapter-state, lang-fonts
 #import "base.typ" as base
 #let code-font = ((name: "DejaVu Sans Mono", covers: regex("[A-Za-z0-9]")), "Pretendard")
 
@@ -50,9 +50,11 @@
           circle(radius: 1.6mm, fill: t.brand)
         }
       })
-      place(bottom + left, dy: -14mm,
-        text(font: t.sans-font, size: 8pt, weight: "medium", tracking: 0.08em,
-          fill: t.muted, meta.at("publisher", default: "BOOKFORGE")))
+      if opt(meta, "publisher") != none {
+        place(bottom + left, dy: -14mm,
+          text(font: t.sans-font, size: 8pt, weight: "medium", tracking: 0.08em,
+            fill: t.muted, opt(meta, "publisher")))
+      }
       v(20mm)
     })
   })
@@ -142,9 +144,10 @@
     linebreak()
     [초판 1쇄 발행 #meta.at("date", default: "")]
     linebreak()
-    [지은이 #meta.at("author", default: "bookforge") · 펴낸곳 bookforge]
+    [지은이 #meta.at("author", default: "bookforge")]
+    if opt(meta, "publisher") != none [ · 펴낸곳 #opt(meta, "publisher")]
     linebreak()
-    [조판 bookforge · 본문 Noto Serif KR · 표지·라벨 Pretendard]
+    colophon-fonts(TT, meta)
   })
 }
 

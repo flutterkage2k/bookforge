@@ -97,12 +97,15 @@
     }
     // 발행처 락업 — 하단 중앙
     place(bottom + center, dy: -12mm, {
-      align(center, {
-        rect(width: 12mm, height: 0.8pt, fill: c-brand)
-        v(2.4mm, weak: true)
-        text(size: 9pt, weight: "semibold", tracking: 0.14em,
-          upper(meta.at("publisher", default: meta.at("author", default: "bookforge"))))
-      })
+      let imprint = if opt(meta, "publisher") != none { opt(meta, "publisher") }
+                    else { opt(meta, "author") }
+      if imprint != none {
+        align(center, {
+          rect(width: 12mm, height: 0.8pt, fill: c-brand)
+          v(2.4mm, weak: true)
+          text(size: 9pt, weight: "semibold", tracking: 0.14em, upper(imprint))
+        })
+      }
     })
   })
 }

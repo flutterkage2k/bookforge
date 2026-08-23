@@ -53,6 +53,37 @@
   else { "?" }
 }
 
+// 판권면의 서체·조판 표기 — 스타일마다 판권면을 따로 그리므로 이 부분만 공용으로 뺀다.
+// 종전에는 academic·essay가 문자열을 직접 박아, 사용자가 Gmarket Sans를 지정해도
+// "본문 Noto Serif KR"이 찍혔다(실측). 실제 스택을 읽어야 사실과 맞는다.
+//
+// meta.typesetter로 「조판 bookforge」를 바꾸거나, 빈 문자열이면 그 줄을 아예 뺀다.
+// 펴낸곳·조판 표기는 "비우면 안 나온다"가 규칙이다. 키를 지우면 Typst 기본값이
+// 되살아나므로, 빈 문자열도 값으로 저장하고 여기서 걸러야 비우기가 실제로 동작한다.
+#let opt(meta, key) = {
+  let v = meta.at(key, default: none)
+  if v == none or v == "" { none } else { v }
+}
+
+#let colophon-fonts(t, meta) = {
+  let ts = meta.at("typesetter", default: "bookforge")
+  if ts != "" [조판 #ts · ]
+  [본문 서체 #main-face(t.body-font) · 표제 서체 #main-face(t.display-font)]
+  let uf = meta.at("fonts", default: (:))
+  if type(uf) == dictionary and uf.len() > 0 {
+    linebreak()
+    let label = (ko: "한국어", ja: "일본어", en: "영문")
+    let names = ()
+    for k in ("ko", "ja", "en") {
+      if k in uf { names.push(label.at(k) + " " + uf.at(k).at("family", default: "?")) }
+    }
+    if names.len() > 0 [지정 서체 — #names.join(" · ")]
+    linebreak()
+    // 동봉 서체는 OFL이지만 사용자가 고른 서체는 조건이 제각각이다 — 배포 전 확인 대상임을 남긴다.
+    [지정 서체의 사용·배포 조건은 각 서체의 라이선스를 따릅니다.]
+  }
+}
+
 #let merged(tokens) = {
   let t = default-tokens
   for (k, v) in tokens { t.insert(k, v) }
@@ -232,24 +263,9 @@
     linebreak()
     if "date" in meta [초판 1쇄 발행 #meta.date]
     linebreak()
-    [펴낸곳 #meta.at("publisher", default: "bookforge") · 조판 bookforge 자동 조판 파이프라인]
+    if opt(meta, "publisher") != none [펴낸곳 #opt(meta, "publisher")]
     linebreak()
-    // 실제로 쓰인 서체를 적는다. 종전에는 default-tokens를 읽어 스타일·사용자 지정과
-    // 무관하게 늘 "Pretendard"가 찍혔다(판권면이 사실과 달라지는 결함).
-    [본문 서체 #main-face(t.body-font) · 표제 서체 #main-face(t.display-font)]
-    let uf = meta.at("fonts", default: (:))
-    if type(uf) == dictionary and uf.len() > 0 {
-      linebreak()
-      let label = (ko: "한국어", ja: "일본어", en: "영문")
-      let names = ()
-      for k in ("ko", "ja", "en") {
-        if k in uf { names.push(label.at(k) + " " + uf.at(k).at("family", default: "?")) }
-      }
-      if names.len() > 0 [지정 서체 — #names.join(" · ")]
-      linebreak()
-      // 동봉 서체는 OFL이지만 사용자가 고른 서체는 조건이 제각각이다 — 배포 전 확인 대상임을 남긴다.
-      [지정 서체의 사용·배포 조건은 각 서체의 라이선스를 따릅니다.]
-    }
+    colophon-fonts(t, meta)
     linebreak()
     [이 책의 내용은 조사 시점 기준이며, 인용·수치는 본문 표기 출처를 따릅니다.]
   })

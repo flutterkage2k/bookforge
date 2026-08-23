@@ -1,5 +1,5 @@
 // bookforge style: business — 비즈니스·컨설팅 리포트 (STYLE.md: 200×280, navy 시스템)
-#import "base.typ": code-theme, default-tokens, keep-words, numpad, chapter-state, full-bleed, lang-fonts
+#import "base.typ": code-theme, colophon-fonts, opt, default-tokens, keep-words, numpad, chapter-state, full-bleed, lang-fonts
 #import "base.typ" as base
 #let code-font = ((name: "DejaVu Sans Mono", covers: regex("[A-Za-z0-9]")), "Pretendard")
 
@@ -69,9 +69,14 @@
     block(width: 100%, height: 40%, clip: true, cover-pattern(200mm, 112mm))
     place(top + left, dx: 20mm, dy: 20mm, rect(width: 24mm, height: 4mm, fill: accent))
     // 시리즈 라벨: 제목 블록 위 6mm
-    place(top + left, dx: 20mm, dy: 114mm,
-      text(fill: navy-300, font: TT.display-font, size: 8pt, tracking: 0.06em,
-        upper(meta.at("series", default: "BOOKFORGE INSIGHT REPORT"))))
+    // 시리즈 라벨은 이 스타일의 표지 디자인 요소라, 키가 아예 없으면 기본 문구를 쓴다.
+    // 빈 문자열로 저장하면 라벨 자체가 빠진다(펴낸곳과 같은 규칙).
+    let series = if "series" in meta { opt(meta, "series") } else { "BOOKFORGE INSIGHT REPORT" }
+    if series != none {
+      place(top + left, dx: 20mm, dy: 114mm,
+        text(fill: navy-300, font: TT.display-font, size: 8pt, tracking: 0.06em,
+          upper(series)))
+    }
     // 제목 블록 상단 = 판면 상단(28mm) + 96mm = 페이지 상단 124mm 고정 (STYLE 표지 문법)
     place(top + left, dx: 20mm, dy: 124mm, block(width: 160mm, {
       set text(fill: white, font: TT.display-font)
@@ -94,7 +99,9 @@
     }))
     place(bottom + left, dx: 20mm, dy: -18mm, {
       set text(size: 8pt, fill: navy-100, font: TT.sans-font)
-      [#meta.at("author", default: "bookforge") · #meta.at("date", default: "") · #meta.at("series_no", default: "REPORT 01")]
+      [#meta.at("author", default: "bookforge") · #meta.at("date", default: "")]
+      let sno = if "series_no" in meta { opt(meta, "series_no") } else { "REPORT 01" }
+      if sno != none [ · #sno]
     })
   })
 }
@@ -303,7 +310,9 @@
     v(1fr)
     line(length: 40%, stroke: 0.4pt + rule-c)
     v(4pt)
-    [#meta.title · #meta.at("author", default: "bookforge") · #meta.at("date", default: "") 발행 · bookforge로 조판]
+    [#meta.title · #meta.at("author", default: "bookforge") · #meta.at("date", default: "") 발행]
+    linebreak()
+    colophon-fonts(TT, meta)
     linebreak()
     [본 보고서의 수치·인용은 본문 표기 출처를 따르며, 무단 전재를 금합니다.]
   })

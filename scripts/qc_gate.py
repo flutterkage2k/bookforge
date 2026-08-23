@@ -409,8 +409,12 @@ def main():
     for axis in ("A", "B", "C"):
         for p in g14[axis]["problems"]:
             fails.append(f"G14-{axis}: {p}")
+    # 판권면 판별. "조판 bookforge"는 사용자가 바꾸거나 지울 수 있는 문구가 되었으므로
+    # 그것에 기대면 안 된다 — 지우는 순간 판권면이 본문 면으로 분류되어 마지막 장이
+    # G7-MID로 떨어졌다(실측). 모든 스타일이 반드시 찍는 "본문 서체"를 표지로 쓴다.
     colophon_pages = {i + 1 for i, t in enumerate(page_texts)
-                      if "bookforge" in t and "조판" in t and i + 1 >= (ch_starts[-1] if ch_starts else 1)}
+                      if ("본문 서체" in t or ("bookforge" in t and "조판" in t))
+                      and i + 1 >= (ch_starts[-1] if ch_starts else 1)}
     fullbleed = {p["page"] for p in pages
                  if p["imgarea"] >= 0.60 or p.get("vecarea", 0) >= 0.60}
     # float 밀림 면제(구조 파생): 다음 면 첫 블록(통짜 표·그림)이 이 면 잔여 공간보다 크면

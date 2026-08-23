@@ -457,17 +457,30 @@ function metaForm(){
     </div>
     <div class=row>
       <div style="flex:1"><label>지은이</label><input id=mauthor value="${esc(b.author||'')}"></div>
-      <div style="flex:1"><label>펴낸곳</label><input id=mpub value="${esc(b.publisher||'')}"></div>
+      <div style="flex:1"><label>펴낸곳 (비우면 표지·판권면에서 빠집니다)</label>
+        <input id=mpub placeholder="bookforge" value="${esc(b.publisher===undefined?'':b.publisher)}"></div>
       <div style="flex:1"><label>발행 (예: 2026-08)</label><input id=mdate value="${esc(b.date||'')}"></div>
       <div style="flex:1"><label>브랜드색 (#rrggbb)</label><input id=mbrand value="${esc(b.brand||'')}"></div>
     </div>
+    <div class=row>
+      <div style="flex:1"><label>조판 표기 (판권면 · 비우면 그 줄이 빠집니다)</label>
+        <input id=mtypeset placeholder="bookforge" value="${esc(b.typesetter===undefined?'bookforge':b.typesetter)}"></div>
+    </div>
+    ${b.style!=='business'?'':`<div class=row>
+      <div style="flex:1"><label>시리즈 라벨 (표지 · 비우면 빠집니다)</label>
+        <input id=mseries value="${esc(b.series===undefined?'BOOKFORGE INSIGHT REPORT':b.series)}"></div>
+      <div style="flex:1"><label>호수</label>
+        <input id=mseriesno value="${esc(b.series_no===undefined?'REPORT 01':b.series_no)}"></div>
+    </div>`}
     <div class=row style="margin-top:12px"><button class=primary onclick=saveMeta()>책 정보 저장</button>
       <span class=muted>저장 후 5단계 ① 빌드</span></div>
   </div>`;
 }
 async function saveMeta(){
   const r=await api('/api/meta',{name:book,title:$('mtitle').value,subtitle:$('msub').value,
-    author:$('mauthor').value,publisher:$('mpub').value,date:$('mdate').value,brand:$('mbrand').value});
+    author:$('mauthor').value,publisher:$('mpub').value,date:$('mdate').value,
+    brand:$('mbrand').value,typesetter:$('mtypeset').value,
+    ...($('mseries')?{series:$('mseries').value,series_no:$('mseriesno').value}:{})});
   $('log').textContent=r.out||r.error;
   if(!r.error) open_(book);
 }
@@ -1328,12 +1341,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/meta":
                 d = book_dir(data["name"])
                 book = json.loads((d / "book.json").read_text())
-                for k in ("title", "subtitle", "author", "publisher", "date", "brand"):
+                for k in ("title", "subtitle", "author", "publisher", "date", "brand",
+                          "typesetter", "series", "series_no"):
                     if k in data:
                         v = (data[k] or "").strip()
                         if k == "brand" and v and not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
                             raise ValueError("브랜드색은 #rrggbb 형식이어야 합니다")
-                        if v:
+                        # typesetter·publisher는 빈 값 자체가 뜻을 갖는다 — "그 줄을 빼라".
+                        # 지워버리면 Typst 기본값 "bookforge"가 되살아나 비우기가 동작하지 않는다.
+                        if v or k in ("typesetter", "publisher", "series", "series_no"):
                             book[k] = v
                         else:
                             book.pop(k, None)

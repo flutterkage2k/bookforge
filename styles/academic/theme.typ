@@ -1,5 +1,5 @@
 // bookforge style: academic — 학술·논문형 (STYLE.md: 신국판 153×225, 1도+먹)
-#import "base.typ": code-theme, default-tokens, keep-words, chapter-state, lang-fonts
+#import "base.typ": code-theme, colophon-fonts, opt, default-tokens, keep-words, chapter-state, lang-fonts
 #import "base.typ" as base
 #let code-font = ((name: "DejaVu Sans Mono", covers: regex("[A-Za-z0-9]")), "Pretendard")
 
@@ -47,8 +47,10 @@
     align(center, text(font: TT.display-font, weight: "medium", size: 11.5pt, fill: ink,
       meta.at("author", default: "bookforge")))
     v(1fr)
-    align(center, text(font: TT.display-font, weight: "medium", size: 9.5pt, fill: ink,
-      meta.at("publisher", default: "bookforge")))
+    if opt(meta, "publisher") != none {
+      align(center, text(font: TT.display-font, weight: "medium", size: 9.5pt, fill: ink,
+        opt(meta, "publisher")))
+    }
   })
 }
 
@@ -181,7 +183,7 @@
     linebreak()
     [#meta.at("date", default: "") 발행 · 지은이 #meta.at("author", default: "bookforge")]
     linebreak()
-    [조판 bookforge · 본문 Noto Serif KR·Libertinus Serif · 표제 Pretendard]
+    colophon-fonts(TT, meta)
   })
 }
 
