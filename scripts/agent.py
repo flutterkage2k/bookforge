@@ -439,6 +439,20 @@ def _fix_plan(book_dir: Path, style: str, fails: list) -> list:
     return out
 
 
+def _split_plan(fails: list) -> list:
+    """G15-PARA(단락이 상한 행수를 넘음) → [(파일명, 첫 28자)] 계획.
+
+    분량 조절과는 다른 조치다 — 글자 수는 그대로 두고 단락을 둘로 나눈다.
+    종전에는 이 실패를 '분량으로 못 고침'으로 분류해 루프가 통째로 멈췄다.
+    """
+    out = []
+    for f in fails:
+        m = re.match(r"FAIL G15-PARA: (ch-\d+\.md): .*?— '(.+?)…' 분할 필요", f)
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
 def cmd_fix(book_dir: Path, rounds: int):
     """빌드 → 게이트 → 실패한 장 분량 조절을 통과할 때까지 반복한다."""
     book, style, _ = load(book_dir)
@@ -475,6 +489,31 @@ def cmd_fix(book_dir: Path, rounds: int):
                 # 조치했는데 나빠졌거나 그대로다 = 그 방향은 아니다. 반대로, 폭은 절반.
                 back = -prev["act"] // 2 or -prev["act"]
                 plan[i] = (f, int(back), why + " (지난 조치가 듣지 않아 반대로 절반)", score)
+        splits = _split_plan(fails)
+        if splits and not plan:
+            for f, head in splits:
+                path = safe_chapter(book_dir, f)
+                text = path.read_text(encoding="utf-8")
+                prompt = f"""아래는 한국어 단행본의 한 장이다. 한 단락이 너무 길어 조판에서 걸렸다.
+
+문제 단락: '{head}'로 시작하는 단락
+할 일: 그 단락만 의미가 끊기는 자리에서 두 단락으로 나눠라.
+
+지키기:
+- 글자를 더하거나 빼지 않는다. 나누기만 한다.
+- 나머지 단락·제목·표·콜아웃은 한 글자도 건드리지 않는다.
+- 마크다운 원고 전체를 출력한다(설명 금지).
+
+--- 원고 시작 ---
+{text}
+--- 원고 끝 ---"""
+                new_text = as_chapter(claude(prompt))
+                if not new_text:
+                    print(f"  {f}: 단락 분할 응답을 받지 못해 건너뜀", flush=True)
+                    continue
+                path.write_text(new_text.rstrip() + "\n", encoding="utf-8")
+                print(f"  {f}: 긴 단락 분할 ('{head}…')", flush=True)
+            continue
         if not plan:
             codes = sorted({re.match(r"FAIL ([A-Z0-9-]+)", f).group(1)
                             for f in fails if re.match(r"FAIL ([A-Z0-9-]+)", f)})
