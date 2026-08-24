@@ -371,7 +371,9 @@ const PANEL={
  </div>`,
  4:()=>`<div class=card>
    <h2>집필</h2>
-   <p class=hint>마크다운으로 씁니다. 첫 줄은 <code># 장 제목</code>이고 목차의 제목과 같아야 합니다.</p>
+   <p class=hint>마크다운으로 씁니다. 첫 줄은 <code># 장 제목</code>이고 목차의 제목과 같아야 합니다.
+     사진·스크린샷은 「이미지 넣기」 버튼으로 올리거나, 복사해 두고 본문에 <b>Cmd+V로 붙여넣으면</b>
+     책 폴더 assets/에 저장되고 커서 자리에 링크가 끼워집니다. 캡션과 출처만 채우면 됩니다.</p>
    <div class=chaps>${state.chapters.map(c=>{
      const n=(state.sizes||{})[c]||0;
      const un = dirty(c) ? ' •저장 안 됨' : '';
@@ -383,6 +385,10 @@ const PANEL={
      <button class=primary onclick="agent('all')">AI에게 전체 집필 맡기기</button>
      <button onclick="agent('chapter',chap)">이 장만 다시 쓰게 하기</button>
      <button onclick="agent('diagrams')">AI에게 도해 넣기</button>
+     <button onclick="$('imgfile').click()">이미지 넣기</button>
+     <input type=file id=imgfile style="display:none"
+       accept="image/png,image/jpeg,image/webp,image/svg+xml"
+       onchange="if(this.files[0])uploadImage(this.files[0]);this.value=''">
      <button onclick="saveFile(chap,'ta4')">직접 고친 내용 저장</button>
      <button onclick="go(5)">다음: 빌드</button></div>
    <p class=hint style="margin-top:10px">‘도해 넣기’는 본문을 읽고 그림이 필요한 자리를 최대
@@ -397,6 +403,7 @@ const PANEL={
      <tr><td>표</td><td><code>| 열 | 열 |</code> 형식</td></tr>
      <tr><td>콜아웃</td><td><code>::: tip 제목</code> … <code>:::</code> (info·tip·warn·quote·pull)</td></tr>
      <tr><td>도해</td><td><code>![캡션](../assets/fig-01.svg "출처: …")</code> — 단독 문단</td></tr>
+     <tr><td>이미지</td><td><code>![캡션](../assets/사진.png "출처: …")</code> — 단독 문단. png·jpg·webp·svg</td></tr>
      </table></details>
  </div>`,
  5:()=>`<div class=card>
@@ -656,7 +663,38 @@ async function loadFile(path,ta){
   el.oninput=()=>{ drafts[k]=el.value; };
 }
 window.addEventListener('beforeunload', e=>{ if(anyDirty()){ e.preventDefault(); e.returnValue=''; } });
-async function loadChapter(){ loadFile(chap,'ta4'); }
+async function loadChapter(){ await loadFile(chap,'ta4'); armImagePaste(); }
+// 스크린샷을 복사해 원고에 바로 붙여넣기 — 파일 업로드와 같은 경로를 탄다
+function armImagePaste(){
+  const el=$('ta4'); if(!el) return;
+  el.onpaste=e=>{
+    const it=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));
+    if(!it) return;               // 글자 붙여넣기는 브라우저 기본 동작 그대로
+    e.preventDefault();
+    const ext=(it.type.split('/')[1]||'png').replace('jpeg','jpg').replace('svg+xml','svg');
+    const t=new Date(), z=n=>String(n).padStart(2,'0');
+    uploadImage(it.getAsFile(),
+      `paste-${t.getFullYear()}${z(t.getMonth()+1)}${z(t.getDate())}-${z(t.getHours())}${z(t.getMinutes())}${z(t.getSeconds())}.${ext}`);
+  };
+}
+async function uploadImage(file,forcedName){
+  if(!chap){ $('log').textContent='먼저 왼쪽에서 장을 고르세요.'; return; }
+  if(file.size>6*1024*1024){ $('log').textContent='이미지가 6MB를 넘습니다. 줄여서 올리세요.'; return; }
+  const b64=await new Promise((ok,no)=>{ const r=new FileReader();
+    r.onload=()=>ok(r.result.split(',')[1]); r.onerror=no; r.readAsDataURL(file); });
+  const r=await api('/api/upload',{name:book,filename:forcedName||file.name,data:b64});
+  if(r.error){ $('log').textContent='이미지 업로드 실패: '+r.error; return; }
+  insertAtCursor('ta4', `\n\n![캡션을 쓰세요](${r.url} "출처: ")\n\n`);
+  $('log').textContent=`이미지 저장됨: ${r.url} — 캡션·출처를 채우고 「직접 고친 내용 저장」을 누르세요.`;
+}
+function insertAtCursor(ta,text){
+  const el=$(ta); if(!el) return;
+  const a=el.selectionStart??el.value.length, b=el.selectionEnd??a;
+  el.value=el.value.slice(0,a)+text+el.value.slice(b);
+  el.selectionStart=el.selectionEnd=a+text.length;
+  drafts[key(chap)]=el.value;    // 재렌더에도 살아남게 초안에 기록
+  el.focus();
+}
 async function saveFile(path,ta){
   if(!path){ $('log').textContent='저장할 파일이 없습니다'; return; }
   const el=$(ta);
@@ -874,6 +912,46 @@ def book_dir(name: str) -> Path:
         raise ValueError("no such book")
     under_root(d)
     return d
+
+
+
+# 업로드 허용 형식과 매직 바이트 — 확장자만 믿으면 아무 파일이나 assets/에 들어온다.
+IMAGE_TYPES = {
+    "png": lambda b: b[:8] == b"\x89PNG\r\n\x1a\n",
+    "jpg": lambda b: b[:2] == b"\xff\xd8",
+    "jpeg": lambda b: b[:2] == b"\xff\xd8",
+    "webp": lambda b: b[:4] == b"RIFF" and b[8:12] == b"WEBP",
+    "svg": lambda b: b"<svg" in b[:4096],
+}
+
+
+def save_upload(name: str, filename: str, data_b64: str) -> dict:
+    """이미지를 책의 assets/에 저장하고 원고에 쓸 상대 링크를 돌려준다."""
+    import base64
+    import binascii
+    import re as _re
+    d = book_dir(name)
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in IMAGE_TYPES:
+        return {"error": "png·jpg·webp·svg만 올릴 수 있습니다"}
+    try:
+        blob = base64.b64decode(data_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return {"error": "이미지 데이터를 읽지 못했습니다"}
+    if not blob or len(blob) > 6 * 1024 * 1024:
+        return {"error": "이미지는 6MB까지입니다"}
+    if not IMAGE_TYPES[ext](blob):
+        return {"error": f"파일 내용이 .{ext} 형식이 아닙니다"}
+    # 파일명은 조판 소스(Typst·HTML)에 그대로 박히므로 안전한 문자만 남긴다
+    stem = _re.sub(r"[^\w가-힣-]", "-", filename.rsplit(".", 1)[0]).strip("-") or "img"
+    assets = d / "assets"
+    assets.mkdir(exist_ok=True)
+    out, n = assets / f"{stem}.{ext}", 2
+    while out.exists():           # 같은 이름이 있으면 덮어쓰지 않는다
+        out, n = assets / f"{stem}-{n}.{ext}", n + 1
+    under_root(out)
+    out.write_bytes(blob)
+    return {"url": f"../assets/{out.name}"}
 
 
 def safe_file(name: str, rel: str) -> Path:
@@ -1343,6 +1421,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/file":
                 safe_file(data["name"], data["path"]).write_text(data["text"])
                 return self._json({"ok": True})
+            if u.path == "/api/upload":
+                return self._json(save_upload(data["name"], data.get("filename") or "",
+                                              data.get("data") or ""))
             if u.path == "/api/settings":
                 return self._json(save_settings(data))
             if u.path == "/api/report":
