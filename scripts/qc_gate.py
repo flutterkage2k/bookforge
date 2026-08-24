@@ -561,11 +561,24 @@ def main():
         code = role_by_page.get(pg)
         if pg in tails:
             tail_reaches.append(p["reach"])
-            entry = {"page": pg, "reach": p["reach"], "lines": p["lines"], "role": code}
+            # 꼬리 행수는 글 행 + 객체(이미지·도해) 높이의 행 환산으로 센다.
+            # 전면 이미지 한 장으로 끝나는 장(캡션 1행)이 "꼬리 1행"으로 찍혔다(실측 —
+            # 사용자가 올린 QR 사진 한 장이 장 끝 면을 통째로 차지한 정상 지면).
+            segs = sorted(p["_objs"])
+            merged, ou = [], 0.0
+            for a, b in segs:
+                if merged and a <= merged[-1][1]:
+                    merged[-1] = (merged[-1][0], max(merged[-1][1], b))
+                else:
+                    merged.append((a, b))
+            ou = sum(b - a for a, b in merged)
+            lines_eq = p["lines"] + int(ou / (m["book_pitch"] or 12))
+            entry = {"page": pg, "reach": p["reach"], "lines": p["lines"],
+                     "lines_eq": lines_eq, "role": code}
             g7t["tails"].append(entry)
-            if p["lines"] < 6:
+            if lines_eq < 6:
                 g7t["ok"] = False
-                fails.append(f"G7-TAIL: p{pg} 꼬리 {p['lines']}행 < 6 (HARD — 사유 코드 불가)")
+                fails.append(f"G7-TAIL: p{pg} 꼬리 {lines_eq}행(객체 환산 포함) < 6 (HARD — 사유 코드 불가)")
             elif p["reach"] < tail_hard:
                 g7t["ok"] = False
                 fails.append(f"G7-TAIL: p{pg} reach {p['reach']} < HARD {tail_hard}")
