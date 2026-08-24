@@ -158,6 +158,7 @@ PAGE = r"""<!doctype html><meta charset=utf-8><title>bookforge</title>
   <span id=hstate class="pill idle">대기</span>
   <span style="flex:1"></span>
   <a id=pdflink class=muted href="#" target=_blank style="display:none">PDF 열기 ↗</a>
+  <span class=muted title="서버가 실행 중인 코드의 커밋. git log -1 과 다르면 서버가 옛 코드입니다 — 재시작하세요.">서버 버전 %VERSION%</span>
 </header>
 <div class=wrap>
  <aside>
@@ -920,6 +921,28 @@ def gate_summary(d: Path) -> dict | None:
 
 
 
+def server_version() -> str:
+    """이 서버가 실행 중인 코드의 버전. 커밋 해시·날짜가 1순위, git이 없으면 파일 수정시각.
+
+    "재시작했는데 왜 안 바뀌지?"를 화면에서 바로 판별하기 위한 것 — 화면의 버전과
+    `git log -1 --format=%h`가 다르면 옛 코드가 떠 있는 것이다.
+    """
+    import datetime
+    import subprocess as sp
+    try:
+        r = sp.run(["git", "-C", str(SKILL), "log", "-1", "--format=%h %cs"],
+                   capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except Exception:
+        pass
+    ts = datetime.datetime.fromtimestamp(pathlib_mtime := Path(__file__).stat().st_mtime)
+    return "커밋 불명 · 파일 " + ts.strftime("%Y-%m-%d %H:%M")
+
+
+VERSION = None  # main()에서 채운다 — import 시점의 git 호출을 피한다
+
+
 def failed_codes(d: Path) -> list[str]:
     report = json.loads((d / "gate-report.json").read_text())
     return sorted(c for c, v in (report.get("gates") or {}).items()
@@ -1232,7 +1255,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/":
                 styles = [[k, ko, desc] for k, (ko, desc) in STYLE_KO.items()]
                 page = (PAGE.replace("%STYLES%", json.dumps(styles, ensure_ascii=False))
-                            .replace("%LENGTHS%", json.dumps(LENGTHS, ensure_ascii=False)))
+                            .replace("%LENGTHS%", json.dumps(LENGTHS, ensure_ascii=False))
+                            .replace("%VERSION%", VERSION or server_version()))
                 return self._send(200, "text/html; charset=utf-8", page.encode())
             if u.path == "/api/settings":
                 return self._json(load_settings())
@@ -1428,7 +1452,10 @@ def main():
         return demo()
     ROOT = Path(a.books_root).resolve()
     ROOT.mkdir(parents=True, exist_ok=True)
+    global VERSION
+    VERSION = server_version()
     print(f"bookforge web UI → http://127.0.0.1:{a.port}  (books: {ROOT})")
+    print(f"서버 버전: {VERSION}")
     http.server.ThreadingHTTPServer(("127.0.0.1", a.port), Handler).serve_forever()
 
 
