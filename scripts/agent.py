@@ -57,6 +57,8 @@ CONTRACT = """쓸 수 있는 문법은 다음뿐이다.
 - 전체를 코드펜스(```)로 감싸기
 - 자료에 없는 수치·통계·연도·기관명·인용문 (지어내면 게이트 G10이 잡는다)
 - 콜아웃에만 등장하는 숫자 (본문에도 같은 수치가 있어야 한다)
+- `::: pull`에 본문에 없는 문장 (pull은 본문 문장을 크게 보여주는 장치다.
+  본문 한 문장을 글자 하나 바꾸지 않고 그대로 복사해 넣어라. 요약·재구성은 인용이 아니다)
 - AI 자기언급, 과장, "결론적으로" 같은 상투구"""
 
 
@@ -130,7 +132,14 @@ def as_chapter(text: str) -> str | None:
     lines = text.splitlines()
     for i, ln in enumerate(lines):
         if ln.startswith("# "):
-            return "\n".join(lines[i:]).strip()
+            body = "\n".join(lines[i:]).strip()
+            # 짝 없는 ``` 하나가 끝에 남으면 그 뒤는 원고가 아니라 모델의 작업 메모다.
+            # 실측: "```\n\n(가) 선택. 원본 문장 …" 이 원고에 그대로 저장되어
+            # 코드 블록으로 렌더 → 한글이 모노스페이스 폴백(Type3)으로 찍혀 G2가 떨어졌다.
+            if body.count("```") % 2 == 1:
+                cut = body.rfind("```")
+                body = body[:cut].rstrip()
+            return body or None
     return None
 
 
@@ -439,6 +448,21 @@ def _fix_plan(book_dir: Path, style: str, fails: list) -> list:
     return out
 
 
+def _pull_plan(fails: list) -> list:
+    """G10 중 pull 인용 어긋남 → [(파일명, 콜아웃에만 있는 문장)] 계획.
+
+    pull은 본문 문장을 그대로 크게 보여주는 장치다. 본문에 없는 문장이 들어가면
+    없는 말을 인용한 셈이 된다. 조치는 분량이 아니라 "본문 문장으로 교체"다.
+    (같은 G10이라도 콜아웃 수치 날조는 어느 수치를 살릴지 사람이 정해야 해서 제외한다.)
+    """
+    out = []
+    for f in fails:
+        m = re.match(r"FAIL G10: (ch-\d+\.md): pull 인용이 본문에 없음 — '(.+?)'\s*$", f)
+        if m:
+            out.append((m.group(1), m.group(2)))
+    return out
+
+
 def _split_plan(fails: list) -> list:
     """G15-PARA(단락이 상한 행수를 넘음) → [(파일명, 첫 28자)] 계획.
 
@@ -489,6 +513,37 @@ def cmd_fix(book_dir: Path, rounds: int):
                 # 조치했는데 나빠졌거나 그대로다 = 그 방향은 아니다. 반대로, 폭은 절반.
                 back = -prev["act"] // 2 or -prev["act"]
                 plan[i] = (f, int(back), why + " (지난 조치가 듣지 않아 반대로 절반)", score)
+        pulls = _pull_plan(fails)
+        if pulls and not plan:
+            for f, quote in pulls:
+                path = safe_chapter(book_dir, f)
+                text = path.read_text(encoding="utf-8")
+                m = re.search(r"^::: pull[^\n]*\n(.+?)\n(?=(?:[^\n]*\n)?^:::\s*$)", text, re.M | re.S)
+                if not m:
+                    print(f"  {f}: pull 콜아웃을 찾지 못해 건너뜀", flush=True)
+                    continue
+                body = re.sub(r"^:::.*?^:::\s*$", "", text, flags=re.S | re.M)
+                prompt = f"""아래 본문에서 풀퀘트(크게 뽑아 보여줄 인용)로 쓸 가장 핵심적인 문장 하나를 골라라.
+
+지키기:
+- 본문에 있는 문장을 **글자 하나 바꾸지 않고 그대로** 출력한다. 다듬거나 합치면 안 된다.
+- 12자 이상 60자 이하의 완결된 한 문장을 고른다.
+- 그 문장 한 줄만 출력한다. 설명·따옴표·머리말 금지.
+
+--- 본문 시작 ---
+{body}
+--- 본문 끝 ---"""
+                picked = (claude(prompt) or "").strip().strip('"「」')
+                # 모델 응답을 믿지 않는다 — 본문에 실재하는지 여기서 검증하고,
+                # 실패하면 콜아웃을 지운다(없는 말을 인용하느니 인용을 뺀다).
+                if picked and picked in body and len(picked) >= 12:
+                    text = text[:m.start(1)] + picked + text[m.end(1):]
+                    print(f"  {f}: pull 인용을 본문 문장으로 교체", flush=True)
+                else:
+                    text = re.sub(r"^::: pull.*?^:::\s*\n?", "", text, count=1, flags=re.S | re.M)
+                    print(f"  {f}: 맞는 본문 문장을 못 찾아 pull 콜아웃 제거", flush=True)
+                path.write_text(text.rstrip() + "\n", encoding="utf-8")
+            continue
         splits = _split_plan(fails)
         if splits and not plan:
             for f, head in splits:

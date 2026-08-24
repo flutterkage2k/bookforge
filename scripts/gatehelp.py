@@ -35,7 +35,13 @@ GATES = {
     "G8-STRETCH": ("행송을 늘려 채웠는지", "같은 원인입니다. 짧은 블록을 합치세요.", MANUSCRIPT, False),
     "G9":  ("면 끝 제목 고립·widow", "제목이 면 끝에 홀로 남았습니다. 앞 문단을 늘려 밀어내세요.", MANUSCRIPT, False),
     "G9-KEEP": ("제목-본문 결속", "제목과 첫 문단이 갈라졌습니다. 앞 문단을 조절하세요.", MANUSCRIPT, False),
-    "G10": ("콜아웃 수치가 본문에 실재하는지", "박스에만 있는 숫자는 금지입니다. 본문에도 그 수치를 쓰거나 박스에서 지우세요.", MANUSCRIPT, False),
+    # pull 인용 어긋남은 자동 수정이 손댈 수 있고(본문 문장으로 교체), 수치 날조는
+    # 어느 쪽을 살릴지 사람이 정해야 한다. 한 코드 안에 두 성격이 섞여 있어
+    # 자동수정 '가능'으로 표시하되 안내에 두 경우를 나눠 적는다.
+    "G10": ("콜아웃 인용·수치가 본문에 실재하는지",
+            "풀퀘트는 본문 문장을 그대로 복사해야 합니다(맡기기가 고칩니다). "
+            "박스에만 있는 숫자는 본문에도 쓰거나 박스에서 지우세요(직접).",
+            MANUSCRIPT, True),
     "G11": ("여백 사유 코드 무결성", "pageroles.json 선언과 실제 지면이 다릅니다.", TOOL, False),
     "G12": ("장 앞 빈 면", "인쇄용 백면은 전자책에서 금지입니다.", TOOL, False),
     "G13": ("도해 글자가 PDF에 실재하는지", "도해 변환에서 글자가 빠졌습니다. 빌드를 다시 하세요.", TOOL, False),
@@ -78,5 +84,5 @@ if __name__ == "__main__":  # 자가 점검
     assert lookup("G14-Z")[2] == GATES["G14-A"][2]      # 접두 폴백
     assert owner("G4") == TOOL
     assert lookup("G99-NEW")[2] == TOOL                  # 모르는 코드는 도구 탓
-    assert AUTOFIX_CODES == ["G15-PARA", "G7-DOC", "G7-MID", "G7-TAIL"]
+    assert AUTOFIX_CODES == ["G10", "G15-PARA", "G7-DOC", "G7-MID", "G7-TAIL"]
     print("gatehelp OK — 자동 수정 가능:", ", ".join(AUTOFIX_CODES))
