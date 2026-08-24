@@ -81,14 +81,10 @@ def md_to_html(md: str, book_dir: Path | None = None, ch_idx: int | None = None)
             if svg:
                 # 사이드카 bf.width=twothirds — 세로형 도해가 전폭으로 부풀어 면을
                 # 통째로 먹는 것을 막는다 (HTML 트랙은 float가 없어 폭이 유일한 레버)
-                fig_style = ""
-                sidecar = book_dir / "diagrams" / (Path(src).stem + ".json")
-                if sidecar.exists():
-                    bf = json.loads(sidecar.read_text(encoding="utf-8")).get("bf", {})
-                    if bf.get("width") == "twothirds":
-                        fig_style = ' style="width:66%;margin-left:auto;margin-right:auto"'
-                return f'<figure class="svgfig"{fig_style}>{svg}{c}</figure>'
-        return f'<figure><img src="{src}" alt="{alt}">{c}</figure>'
+                return f'<figure class="svgfig"{_fig_width(book_dir, src)}>{svg}{c}</figure>'
+        # 래스터(png·jpg)도 같은 사이드카 폭을 읽는다 — 세로로 긴 스크린샷이
+        # 전폭으로 부풀어 면을 통째로 먹는 것을 막는 유일한 레버(도해와 동일).
+        return f'<figure{_fig_width(book_dir, src)}><img src="{src}" alt="{alt}" style="width:100%">{c}</figure>'
     html = re.sub(
         r'<p><img src="(?P<src>[^"]+)" alt="(?P<alt>[^"]*)"(?: title="(?P<title>[^"]*)")?\s*/?></p>',
         fig, html)
@@ -104,6 +100,20 @@ def _typesetline(book: dict, style: str) -> str:
         face = {"magazine": "Pretendard", "insight": "Noto Serif KR"}.get(style, "Pretendard")
     head = f"{ts}로 조판 · " if ts else ""
     return f"{head}본문 서체 {face}"
+
+
+_WIDTHS = {"twothirds": "66%", "half": "50%"}
+
+
+def _fig_width(book_dir, src) -> str:
+    """diagrams/<stem>.json 사이드카의 bf.width → figure 인라인 스타일."""
+    if not book_dir:
+        return ""
+    sidecar = book_dir / "diagrams" / (Path(src).stem + ".json")
+    if not sidecar.exists():
+        return ""
+    w = _WIDTHS.get((json.loads(sidecar.read_text(encoding="utf-8")).get("bf") or {}).get("width"))
+    return f' style="width:{w};margin-left:auto;margin-right:auto"' if w else ""
 
 
 def inline_svg(book_dir, src: str):

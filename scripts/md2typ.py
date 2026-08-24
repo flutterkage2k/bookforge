@@ -152,6 +152,8 @@ def render_tokens(tokens, ctx) -> str:
                         bfw = json.loads(sidecar.read_text(encoding="utf-8")).get("bf", {}).get("width")
                         if bfw == "twothirds":
                             args.append("width: 66%")
+                        elif bfw == "half":
+                            args.append("width: 50%")
                     if cap:
                         args.append(f"caption: [{cap}]")
                     if source:

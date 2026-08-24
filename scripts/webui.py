@@ -385,6 +385,11 @@ const PANEL={
      <button class=primary onclick="agent('all')">AI에게 전체 집필 맡기기</button>
      <button onclick="agent('chapter',chap)">이 장만 다시 쓰게 하기</button>
      <button onclick="agent('diagrams')">AI에게 도해 넣기</button>
+     <select id=imgsize title="이미지 폭 — 세로로 긴 스크린샷은 절반을 권합니다">
+       <option value=half>이미지 폭: 절반</option>
+       <option value=twothirds>이미지 폭: 본문의 2/3</option>
+       <option value=full>이미지 폭: 전폭</option>
+     </select>
      <button onclick="$('imgfile').click()">이미지 넣기</button>
      <input type=file id=imgfile style="display:none"
        accept="image/png,image/jpeg,image/webp,image/svg+xml"
@@ -699,7 +704,8 @@ async function uploadImage(file,forcedName){
   if(file.size>6*1024*1024){ $('log').textContent='이미지가 6MB를 넘습니다. 줄여서 올리세요.'; return; }
   const b64=await new Promise((ok,no)=>{ const r=new FileReader();
     r.onload=()=>ok(r.result.split(',')[1]); r.onerror=no; r.readAsDataURL(file); });
-  const r=await api('/api/upload',{name:book,filename:forcedName||file.name,data:b64});
+  const r=await api('/api/upload',{name:book,filename:forcedName||file.name,data:b64,
+    width:($('imgsize')||{}).value||'half'});
   if(r.error){ $('log').textContent='이미지 업로드 실패: '+r.error; return; }
   insertAtCursor('ta4', `\n\n![캡션을 쓰세요](${r.url} "출처: ")\n\n`);
   $('log').textContent=`이미지 저장됨: ${r.url} — 캡션·출처를 채우고 「직접 고친 내용 저장」을 누르세요.`;
@@ -942,8 +948,13 @@ IMAGE_TYPES = {
 }
 
 
-def save_upload(name: str, filename: str, data_b64: str) -> dict:
-    """이미지를 책의 assets/에 저장하고 원고에 쓸 상대 링크를 돌려준다."""
+def save_upload(name: str, filename: str, data_b64: str, width: str = "half") -> dict:
+    """이미지를 책의 assets/에 저장하고 원고에 쓸 상대 링크를 돌려준다.
+
+    폭은 도해와 같은 사이드카(diagrams/<이름>.json bf.width)로 남긴다 — 두 조판
+    트랙이 이미 그 파일을 읽는다. 기본 '절반': 세로로 긴 스크린샷이 전폭으로
+    실리면 한 면을 통째로 먹는다(실측: QR 사진이 판면 높이 85%).
+    """
     import base64
     import binascii
     import re as _re
@@ -968,7 +979,13 @@ def save_upload(name: str, filename: str, data_b64: str) -> dict:
         out, n = assets / f"{stem}-{n}.{ext}", n + 1
     under_root(out)
     out.write_bytes(blob)
-    return {"url": f"../assets/{out.name}"}
+    if width in ("twothirds", "half"):
+        dg = d / "diagrams"
+        dg.mkdir(exist_ok=True)
+        (dg / f"{out.stem}.json").write_text(
+            json.dumps({"kind": "image", "bf": {"width": width}}, ensure_ascii=False),
+            encoding="utf-8")
+    return {"url": f"../assets/{out.name}", "width": width}
 
 
 
@@ -1467,7 +1484,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if u.path == "/api/upload":
                 return self._json(save_upload(data["name"], data.get("filename") or "",
-                                              data.get("data") or ""))
+                                              data.get("data") or "",
+                                              data.get("width") or "half"))
             if u.path == "/api/settings":
                 return self._json(save_settings(data))
             if u.path == "/api/report":
