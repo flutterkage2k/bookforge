@@ -93,6 +93,11 @@ body {
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden; }
 .toc li[data-sum=""]::after { display: none; }
 
+/* 7장 이상: 제목을 한 단 내려(22→17pt) 행 감김과 면 넘침을 막는다 (build_html toc--crowd) */
+.toc--crowd li { margin-bottom: 5.5mm; }
+.toc--crowd .toc-title { font-size: 17pt; }
+.toc--crowd .tocpg { font-size: 14pt; flex-basis: 9mm; }
+
 /* ---- chapter opener (FO-C type-only, full page, no folio) ---- */
 .chapter { break-before: page; }
 .opener { page: opener; width: 200mm; height: 265mm; position: relative;

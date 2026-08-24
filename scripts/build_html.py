@@ -99,6 +99,17 @@ def md_to_html(md: str, book_dir: Path | None = None, ch_idx: int | None = None)
     return html
 
 
+def _typesetline(book: dict, style: str) -> str:
+    """판권면 조판·서체 표기. templates/base.typ colophon-fonts와 같은 규칙:
+    typesetter 비우면 조판 문구를 빼고, 서체는 실제 본문 서체를 적는다."""
+    ts = book.get("typesetter", "bookforge")
+    face = ((book.get("fonts") or {}).get("ko") or {}).get("family")
+    if not face:
+        face = {"magazine": "Pretendard", "insight": "Noto Serif KR"}.get(style, "Pretendard")
+    head = f"{ts}로 조판 · " if ts else ""
+    return f"{head}본문 서체 {face}"
+
+
 def apply_user_fonts(css: str, book: dict) -> str:
     """book.json "fonts"(언어별 사용자 폰트)를 테마 CSS의 폰트 변수 앞에 끼운다.
 
@@ -260,7 +271,9 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
         #    흘러넘쳐 장 도비라와 겹쳐 인쇄된다**(실측: 7장·56절 → p3 에서 목차와 1장 도비라 중첩).
         #    겹침은 오버플로가 아니라 중첩이라 G3·G9 가 원리적으로 못 잡는다 — 시각 검수에서만 보인다.
         #    그래서 스타일이 선언한 1면 수용 상한을 넘으면 절을 전량 생략하고 장만 싣는다.
-        if _toc_sec_max is not None and _toc_sec_total > _toc_sec_max:
+        _crowded = _toc_sec_max is not None and (
+            _toc_sec_total > _toc_sec_max or len(outline["chapters"]) >= 7)
+        if _crowded and _toc_sec_total > _toc_sec_max:
             sec_titles_for_toc = []
         else:
             sec_titles_for_toc = sec_titles
@@ -282,9 +295,12 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
     html = tpl.substitute(
         title=book.get("title", ""), subtitle=book.get("subtitle") or "",
         author=book.get("author", "bookforge"), date=book.get("date", ""),
+        typesetline=_typesetline(book, style_dir.name),
         brand=key,
         cover_art=f"background-image:url('{cover_img.as_uri()}')" if cover_img.exists() else "",
-        toc="<ol class=\"toc\">" + "\n".join(toc_items) + "</ol>",
+        # 장 행만으로도 한 면을 넘치는 구성(실측: 7장, 22pt 제목 4개가 2행 감김)은
+        # 절 생략만으로 부족하다 — toc--crowd 로 제목 급수·행간을 한 단 내린다.
+        toc="<ol class=\"toc" + (" toc--crowd" if _crowded else "") + "\">" + "\n".join(toc_items) + "</ol>",
         tocmap="\n".join(tocmap_items),
         backquote=book.get("backquote") or first_pull or book.get("subtitle") or "",
         body="\n".join(sections),
