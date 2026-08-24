@@ -165,10 +165,17 @@ def g14a_toc_numbers(doc, titles, ch_starts):
         y0, y1 = t_span["bbox"][1], t_span["bbox"][3]
         # 같은 행(y 겹침)의 순수 숫자 스팬 — 좌우 무관, 서수 장식(leading zero) 제외,
         # 제목과 수평으로 가장 가까운 것이 쪽번호 (다단 목차의 이웃 칼럼 오탐 방지)
+        # 후보 = ① 제목과 y-겹침(종전) ② 제목 바로 윗줄에서 x-겹침(매거진 폴리오 패턴:
+        # 22pt 제목 행에서 쪽번호가 제목보다 한 줄 위 기준선에 앉아 y-겹침이 깨진다.
+        # 실측: 이때 오른쪽 이미지 맵 캡션이 y-겹침으로 유일 후보가 되어 엉뚱한 수를 읽었다)
+        def _above(sp):
+            gap = y0 - sp["bbox"][3]
+            x_over = not (sp["bbox"][2] < t_span["bbox"][0] or sp["bbox"][0] > t_span["bbox"][2])
+            return x_over and -1 <= gap <= 12
         cands = [s for s in spans_by_page[t_page]
                  if s["text"].strip().isdigit()
                  and not _is_ordinal_decoration(s["text"])
-                 and not (s["bbox"][3] < y0 - 4 or s["bbox"][1] > y1 + 4)]
+                 and (not (s["bbox"][3] < y0 - 4 or s["bbox"][1] > y1 + 4) or _above(s))]
         if not cands:
             problems.append(f"목차 p{t_page + 1}: '{title[:16]}' 행에 쪽번호 없음")
             continue
@@ -185,6 +192,8 @@ def g14a_toc_numbers(doc, titles, ch_starts):
             else:
                 hd = 0.0
             cy = (s["bbox"][1] + s["bbox"][3]) / 2
+            if s["bbox"][3] <= y0 + 1:  # 윗줄 폴리오: 수직 간격 자체가 점수 (기대되는 이탈이라 40배 페널티 부적절)
+                return (y0 - s["bbox"][3]) + 1
             return hd + 40 * abs(cy - t_cy)
         printed = int(min(cands, key=pair_score)["text"].strip())
         pairs.append({"title": title, "printed": printed, "expected": expected})
