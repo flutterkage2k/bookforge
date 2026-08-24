@@ -393,7 +393,7 @@ for (const file of sidecars) {
     if (!labelsA.length) fail(`${name}: 라벨 0개`);
     const aliens = alienColors(normalized, palette, true);
     if (aliens.length) {
-      fail(`${name}: 팔레트 밖 색 ${aliens.join(", ")} — authored SVG는 styles/${style} tokens.diagram.palette + #ffffff만 허용(토큰 밖 색 금지)`);
+      fail(`${name}: 팔레트 밖 색 ${aliens.join(", ")} — authored SVG는 styles/${style} tokens.diagram.palette + #ffffff만 허용(토큰 밖 색 금지) — 스타일을 바꾼 책이라면 이 도해는 옛 스타일 기준입니다. 4단계 「AI에게 도해 넣기」로 다시 생성하세요`);
     }
     const checkA = await pixelSelfCheck(browser, rawAuthored, normalized, FONT_DIR, path.join(checkDir, name));
     if (checkA.ratio > PIXEL_TOLERANCE) {
@@ -469,7 +469,7 @@ for (const file of sidecars) {
   converted = fixLabelContrast(converted, (dg.roles && dg.roles.ink) || palette[0]); // 연한 칸 위 흰 라벨 → ink (G14-C)
   // 글자 하한은 트림 후 최종 좌표계 기준으로 검사 (트림은 실크기를 키우는 방향)
   const floors = fontFloorViolations(converted, widthKey);
-  if (floors.length) fail(`${name}: 도해 내 글자 크기 하한 위반 — ${floors.join("; ")} (bf.width=${widthKey} 기준)`);
+  if (floors.length) fail(`${name}: 도해 내 글자 크기 하한 위반 — ${floors.join("; ")} (bf.width=${widthKey} 기준) — 스타일을 바꾼 책이라면 이 도해는 옛 스타일 기준입니다. 4단계 「AI에게 도해 넣기」로 다시 생성하세요`);
 
   writeFileSync(outSvg, `<!--bf:dsl=sha256:${hash}-->\n${converted}`);
   writeFileSync(outLabels, JSON.stringify(labels, null, 2));

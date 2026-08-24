@@ -482,7 +482,24 @@ function metaForm(){
     </div>`}
     <div class=row style="margin-top:12px"><button class=primary onclick=saveMeta()>책 정보 저장</button>
       <span class=muted>저장 후 5단계 ① 빌드</span></div>
+    <hr style="margin:16px 0;border:none;border-top:1px solid var(--line)">
+    <h2 style="font-size:14px">다른 스타일로 복사본 만들기</h2>
+    <p class=hint>원고는 그대로 두고 스타일만 다른 책을 만듭니다. 원본은 변하지 않습니다.
+      복사본에서 도해가 거부되면 4단계 「AI에게 도해 넣기」로 새 스타일 기준으로 다시 생성하세요.</p>
+    <div class=row>
+      <div style="flex:1"><label>새 스타일</label>
+        <select id=rsstyle>${STYLES.filter(x=>x[0]!==b.style).map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join('')}</select></div>
+      <div style="flex:1"><label>새 폴더 이름 (영문·숫자·-·_)</label>
+        <input id=rsname value="${esc(book)}-2"></div>
+      <div style="flex:0 0 auto;align-self:flex-end"><button onclick="restyle()">복사본 만들기</button></div>
+    </div>
   </div>`;
+}
+async function restyle(){
+  const r=await api('/api/restyle',{name:book,new_name:$('rsname').value.trim(),style:$('rsstyle').value});
+  if(r.error){ $('log').textContent='실패: '+r.error; return; }
+  $('log').textContent=r.out;
+  await open_(r.name); go(5);   // 새 책으로 이동해 바로 빌드부터
 }
 async function saveMeta(){
   const r=await api('/api/meta',{name:book,title:$('mtitle').value,subtitle:$('msub').value,
@@ -952,6 +969,33 @@ def save_upload(name: str, filename: str, data_b64: str) -> dict:
     under_root(out)
     out.write_bytes(blob)
     return {"url": f"../assets/{out.name}"}
+
+
+
+def restyle_copy(src_name: str, new_name: str, style: str) -> dict:
+    """원고·자료·도해 소스만 복사해 스타일만 다른 책을 만든다. 원본은 건드리지 않는다.
+
+    조판 산출물(typeset·draft·final·qc)은 새 스타일로 다시 만들어지는 것이므로 복사하지
+    않는다 — 가져가면 옛 스타일 지면·게이트 결과가 새 책의 것처럼 보이는 사고가 난다.
+    """
+    import shutil
+    src = book_dir(src_name)
+    if not NAME_RE.fullmatch(new_name):
+        return {"error": "폴더 이름은 영문·숫자·-·_ 만 됩니다"}
+    if style not in {p.name for p in (SKILL / "styles").iterdir() if p.is_dir()}:
+        return {"error": "모르는 스타일입니다"}
+    dst = books_root() / new_name
+    if dst.exists():
+        return {"error": f"'{new_name}' 폴더가 이미 있습니다"}
+    # refit-params.json도 제외 — 옛 스타일 활자로 계산된 자간 보정이라 새 스타일엔 독이다
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(
+        "typeset", "draft", "final", "qc", "gate-report.json", "refit-params.json", "*.md.bak"))
+    book = json.loads((dst / "book.json").read_text())
+    book["style"] = style
+    (dst / "book.json").write_text(json.dumps(book, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"name": new_name,
+            "out": f"복사본 생성: {new_name} ({style}) — 5단계에서 빌드하세요. "
+                   "도해가 거부되면 4단계 「AI에게 도해 넣기」로 다시 생성하면 됩니다."}
 
 
 def safe_file(name: str, rel: str) -> Path:
@@ -1470,6 +1514,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                             bool(data.get("web")), data.get("max_queries") or 6))
             if u.path == "/api/new":
                 return self._json(scaffold(data))
+            if u.path == "/api/restyle":
+                return self._json(restyle_copy(data["name"], data.get("new_name") or "",
+                                               data.get("style") or ""))
             if u.path == "/api/font":
                 d = book_dir(data["name"])
                 argv = [sys.executable, str(SKILL / "scripts/fontpick.py"), "set", str(d)]
