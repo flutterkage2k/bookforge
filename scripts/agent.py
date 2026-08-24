@@ -448,6 +448,14 @@ def _fix_plan(book_dir: Path, style: str, fails: list) -> list:
     return out
 
 
+IMG_LINE_RE = re.compile(r"^!\[[^\]]*\]\([^)]+\)\s*$", re.M)
+
+
+def keeps_images(before: str, after: str) -> bool:
+    """재작성 결과가 원본의 이미지 문단을 전부 보존했는가."""
+    return set(IMG_LINE_RE.findall(before)) <= set(IMG_LINE_RE.findall(after))
+
+
 def _pull_plan(fails: list) -> list:
     """G10 중 pull 인용 어긋남 → [(파일명, 콜아웃에만 있는 문장)] 계획.
 
@@ -485,7 +493,14 @@ def cmd_fix(book_dir: Path, rounds: int):
         b = subprocess.run([sys.executable, str(SKILL / "scripts/build.py"), str(book_dir)],
                            capture_output=True, text=True, timeout=3600)
         if b.returncode != 0:
-            die("빌드 실패:\n" + (b.stderr or b.stdout)[-800:])
+            berr = (b.stderr or b.stdout)[-800:]
+            # 도해가 막은 빌드는 분량 조절로 못 푼다 — 도해를 수리하고 이 회차를 다시 돈다
+            if "DIAGRAM FAIL" in berr and "_diagram_repaired" not in history:
+                history["_diagram_repaired"] = {"req": 0, "act": 0, "score": 0}
+                print(f"[{r}회차] 빌드가 도해에서 막혔습니다 — 현재 스타일 기준으로 수리합니다", flush=True)
+                if _repair_diagrams(book_dir, style):
+                    continue
+            die("빌드 실패:\n" + berr)
         q = subprocess.run([sys.executable, str(SKILL / "scripts/qc_gate.py"), str(book_dir)],
                            capture_output=True, text=True, timeout=3600)
         out = (q.stdout + q.stderr).strip()
@@ -566,6 +581,9 @@ def cmd_fix(book_dir: Path, rounds: int):
                 if not new_text:
                     print(f"  {f}: 단락 분할 응답을 받지 못해 건너뜀", flush=True)
                     continue
+                if not keeps_images(text, new_text):
+                    print(f"  {f}: 분할 결과에서 이미지 문단이 사라져 반영하지 않음", flush=True)
+                    continue
                 path.write_text(new_text.rstrip() + "\n", encoding="utf-8")
                 print(f"  {f}: 긴 단락 분할 ('{head}…')", flush=True)
             continue
@@ -606,9 +624,15 @@ def cmd_fix(book_dir: Path, rounds: int):
 {text}
 --- 원고 끝 ---"""
             new = as_chapter(claude(prompt))
+            if new and not keeps_images(text, new):
+                new = as_chapter(claude(prompt + "\n\n주의: 지난 응답에서 이미지 문단(![...])이 "
+                                        "사라졌다. 이미지 문단은 한 글자도 바꾸지 말고 제자리에 둬라."))
             if not new:
                 history.pop(f, None)   # 아무것도 안 했으니 지난 기록도 지운다
                 return f"  {f}: 응답에서 원고를 찾지 못해 건너뜀"
+            if not keeps_images(text, new):
+                history.pop(f, None)
+                return f"  {f}: 재작성에서 이미지 문단이 사라져 반영하지 않음"
             path.write_text(new.rstrip() + "\n", encoding="utf-8")
             history[f] = {"req": delta, "act": len(new) - len(text), "score": score}
             return f"  {f}: {len(text)}자 → {len(new)}자 ({why})"
@@ -769,6 +793,81 @@ def _insert_ref(book_dir: Path, fig: dict, name: str, allowed: set) -> bool:
     return True
 
 
+def _repair_diagrams(book_dir: Path, style: str) -> bool:
+    """빌드를 막는 기존 도해를 현재 스타일 기준으로 다시 만든다.
+
+    스타일을 바꾼 복사본에서 옛 도해가 팔레트·글자 하한에 걸리는 경우가 대표다.
+    사이드카에는 제목이 없으므로 본문의 참조 줄(![캡션](…))에서 제목을 되찾는다.
+    두 번 만들어도 거부되면 도해와 본문 참조를 함께 지운다 — 막힌 채 두지 않는다.
+    반환: 렌더가 성공 상태로 끝났는가.
+    """
+    tokens = json.loads((SKILL / "styles" / style / "tokens.json").read_text(encoding="utf-8"))
+    dg = tokens.get("diagram")
+    if not dg:
+        return False
+    outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
+    tried = {}
+    for _ in range(8):
+        r = subprocess.run(["node", str(SKILL / "scripts/render_diagrams.mjs"),
+                            str(book_dir), "--style", style],
+                           capture_output=True, text=True, timeout=900,
+                           env={**os.environ, "NODE_PATH": subprocess.run(
+                               ["npm", "root", "-g"], capture_output=True, text=True).stdout.strip()})
+        if r.returncode == 0:
+            return True
+        out = (r.stderr or r.stdout).strip().splitlines()
+        err = out[-1][:300] if out else ""
+        m = re.search(r"(fig-\d+)", err)
+        if not m:
+            print(f"  도해 수리 불가 — {err}", flush=True)
+            return False
+        name = m.group(1)
+        ref_file, caption = None, None
+        for c in outline:
+            cp = book_dir / "chapters" / c["file"]
+            if not cp.exists():
+                continue
+            rm = re.search(r"!\[([^\]]*)\]\(\.\./assets/" + name + r"\.svg[^)]*\)",
+                           cp.read_text(encoding="utf-8"))
+            if rm:
+                ref_file, caption = c["file"], rm.group(1)
+                break
+        tried[name] = tried.get(name, 0) + 1
+        sidecar = book_dir / "diagrams" / f"{name}.json"
+        give_up = tried[name] > 2 or not sidecar.exists() or not ref_file
+        if not give_up:
+            sc = json.loads(sidecar.read_text(encoding="utf-8"))
+            width = (sc.get("bf") or {}).get("width") or "full"
+            mm = dg["widths"]["twothirds" if width == "twothirds" else "full"]
+            vbmax = int(mm * 2.835 * 12 / 8)
+            fig = {"title": caption or name, "file": ref_file,
+                   "what": f"'{caption}' — 이 제목이 말하는 내용을 도해로. 종전 도해가 이 스타일에서 거부되어 다시 그린다."}
+            print(f"  {name}: 현재 스타일({style}) 기준으로 재생성 ({tried[name]}회차)", flush=True)
+            try:
+                if sc.get("kind") == "antv":
+                    _make_antv(book_dir, fig, name, width,
+                               f"\n지난 도해가 이 이유로 거부됐다: {err}")
+                else:
+                    _make_authored(book_dir, fig, name, width, vbmax,
+                                   f"\n지난 도해가 이 이유로 거부됐다: {err}\n항목 수를 줄이고 라벨을 더 짧게 하라.")
+                continue
+            except ValueError as e:
+                print(f"  {name}: {e}", flush=True)
+                give_up = True
+        print(f"  {name}: 재생성 실패 — 도해와 본문 참조를 제거합니다", flush=True)
+        for ext in (".json", ".svg"):
+            (book_dir / "diagrams" / f"{name}{ext}").unlink(missing_ok=True)
+        (book_dir / "assets" / f"{name}.svg").unlink(missing_ok=True)
+        (book_dir / "assets" / f"{name}.labels.json").unlink(missing_ok=True)
+        if ref_file:
+            cp = safe_chapter(book_dir, ref_file)
+            t = cp.read_text(encoding="utf-8")
+            t = re.sub(r"\n*^!\[[^\]]*\]\(\.\./assets/" + name + r"\.svg[^)]*\)\s*$",
+                       "\n", t, flags=re.M)
+            cp.write_text(t.rstrip() + "\n", encoding="utf-8")
+    return False
+
+
 def cmd_diagrams(book_dir: Path, limit: int):
     book, style, _ = load(book_dir)
     if style == "essay":
@@ -782,12 +881,30 @@ def cmd_diagrams(book_dir: Path, limit: int):
     tokens = json.loads((SKILL / "styles" / style / "tokens.json").read_text(encoding="utf-8"))
     dg = tokens.get("diagram") or die(f"{style} 스타일은 도해를 지원하지 않습니다")
     (book_dir / "diagrams").mkdir(exist_ok=True)
+    if list((book_dir / "diagrams").glob("fig-*.json")):
+        _repair_diagrams(book_dir, style)   # 스타일 변경 등으로 막힌 기존 도해부터
     plan = _diagram_plan(book_dir, style, limit)
     allowed_files = {c["file"] for c in
                      json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]}
     if not plan:
         print("도해가 필요한 자리를 찾지 못했습니다.")
         return
+    # 본문이 참조하지 않는 고아 도해는 지우고 개수에서 뺀다 — 고아가 상한(limit)을
+    # 차지하면 참조 있는 도해가 0개인 책에서도 "더 만들 수 없음"이 된다(실측).
+    # 고아는 생기는 경로가 실재한다: 목차 재설계가 옛 원고를 .bak으로 밀어내면
+    # 참조는 옛 원고와 함께 떠나고 도해 파일만 남는다.
+    referenced = set()
+    for c in json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]:
+        cp = book_dir / "chapters" / c["file"]
+        if cp.exists():
+            referenced.update(re.findall(r"\.\./assets/(fig-\d+)\.svg", cp.read_text(encoding="utf-8")))
+    for sc in sorted((book_dir / "diagrams").glob("fig-*.json")):
+        if sc.stem not in referenced:
+            print(f"  {sc.stem}: 본문 어디에도 참조가 없어 정리합니다 (고아 도해)", flush=True)
+            for ext in (".json", ".svg"):
+                (book_dir / "diagrams" / f"{sc.stem}{ext}").unlink(missing_ok=True)
+            (book_dir / "assets" / f"{sc.stem}.svg").unlink(missing_ok=True)
+            (book_dir / "assets" / f"{sc.stem}.labels.json").unlink(missing_ok=True)
     used = len(list((book_dir / "diagrams").glob("fig-*.json")))
     made = []
     for k, fig in enumerate(plan, 1):

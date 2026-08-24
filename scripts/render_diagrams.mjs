@@ -402,7 +402,7 @@ for (const file of sidecars) {
     normalized = (await trimViewBox(page, normalized)) || normalized;
     // 글자 하한은 트림 후 최종 좌표계 기준으로 검사 (트림은 실크기를 키우는 방향)
     const floorsA = fontFloorViolations(normalized, widthKey);
-    if (floorsA.length) fail(`${name}: 글자 크기 하한 위반 — ${floorsA.join("; ")} (bf.width=${widthKey})`);
+    if (floorsA.length) fail(`${name}: 글자 크기 하한 위반 — ${floorsA.join("; ")} (bf.width=${widthKey}) — 스타일을 바꾼 책이라면 이 도해는 옛 스타일 기준입니다. 4단계 「AI에게 도해 넣기」로 다시 생성하세요`);
     writeFileSync(outSvgA, `<!--bf:authored=sha256:${hashA}-->\n${normalized}`);
     writeFileSync(outLabelsA, JSON.stringify(labelsA, null, 2));
     rendered++;

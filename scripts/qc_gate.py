@@ -349,6 +349,11 @@ def main():
         clip = fitz.Rect(pr.x0 - TOL, pr.y0 - TOL, pr.x1 + TOL, pr.y1 + TOL)
         for block in page.get_text("dict").get("blocks", []):
             bb = fitz.Rect(block["bbox"])
+            # SVG 경로의 그리기 방향에 따라 좌표가 뒤집힌(x0>x1) bbox가 온다 —
+            # 정규화 없이 담으면 정상 도형이 전부 '판면 밖'으로 찍힌다(실측: 도해 한 장에 16건).
+            bb.normalize()
+            if bb.is_empty:
+                continue
             if not clip.contains(bb):
                 overflows.append({"page": pno + 1, "bbox": list(block["bbox"]),
                                   "kind": "text" if block.get("type") == 0 else "image"})
@@ -611,6 +616,11 @@ def main():
         pg = p["page"]
         if pg < first_ch or pg in structural or pg in tails or pg in role_by_page \
                 or pg in float_pushed:
+            continue
+        # 면의 1/4 이상이 벡터 도해면 제외 — 도해 내부의 공기(노드 사이 간격)는 디자인이지
+        # 채움이 아니다. 잉크 계산은 경로 조각 단위라 도해 내부 여백이 gap으로 새어 나와
+        # 오판된다(실측: 도해 면 gap 0.385 vs 임계 0.368).
+        if p.get("vecarea", 0) >= 0.25:
             continue
         # insight는 H2 위 여백 24mm(STYLE.md 정본)+와이드 콜아웃이 구조적 공기를 만든다 — 임계 완화.
         # 한 면에 섹션 전환이 2회 이상이면 여백이 배로 쌓이므로 디스플레이 행 수 비례 가산.

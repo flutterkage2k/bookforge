@@ -77,12 +77,8 @@ def md_to_html(md: str, book_dir: Path | None = None, ch_idx: int | None = None)
         # SVG 도해는 <img src> 대신 원문 인라인 — SVG-as-image 모드는 외부 @font-face를
         # 차단해 도해 <text>가 폴백 폰트로 렌더되므로.
         if book_dir and src.endswith(".svg") and src.startswith("../assets/"):
-            svg_path = book_dir / "assets" / src[len("../assets/"):]
-            if svg_path.exists():
-                svg = svg_path.read_text(encoding="utf-8")
-                svg = re.sub(r"^<!--bf:dsl=[^>]*-->\n?", "", svg)
-                svg = re.sub(r'(<svg\b[^>]*?)\s+style="[^"]*"', r"\1", svg, count=1)
-                svg = re.sub(r"<svg\b", '<svg style="width:100%;height:auto"', svg, count=1)
+            svg = inline_svg(book_dir, src)
+            if svg:
                 # 사이드카 bf.width=twothirds — 세로형 도해가 전폭으로 부풀어 면을
                 # 통째로 먹는 것을 막는다 (HTML 트랙은 float가 없어 폭이 유일한 레버)
                 fig_style = ""
@@ -108,6 +104,17 @@ def _typesetline(book: dict, style: str) -> str:
         face = {"magazine": "Pretendard", "insight": "Noto Serif KR"}.get(style, "Pretendard")
     head = f"{ts}로 조판 · " if ts else ""
     return f"{head}본문 서체 {face}"
+
+
+def inline_svg(book_dir, src: str):
+    """assets의 SVG를 원문으로 읽어 폭 100% 스타일로 돌려준다. 없으면 None."""
+    svg_path = book_dir / "assets" / src[len("../assets/"):]
+    if not svg_path.exists():
+        return None
+    svg = svg_path.read_text(encoding="utf-8")
+    svg = re.sub(r"^<!--bf:dsl=[^>]*-->\n?", "", svg)
+    svg = re.sub(r'(<svg\b[^>]*?)\s+style="[^"]*"', r"\1", svg, count=1)
+    return re.sub(r"<svg\b", '<svg style="width:100%;height:auto"', svg, count=1)
 
 
 def apply_user_fonts(css: str, book: dict) -> str:
@@ -195,9 +202,10 @@ def build(book_dir: Path, book: dict, outline: dict, style_dir: Path, skill: Pat
         # 목차 이미지 맵(magazine $tocmap): 챕터 첫 컷 4~6장. 캡션은 해당 쪽번호만 —
         # 좌측 리스트와 같은 .tocpg[data-mk] 마크업이라 2-pass 스탬핑이 같이 채운다.
         if img_m and len(tocmap_items) < 5:
+            _tsvg = inline_svg(book_dir, img_m.group(1)) if img_m.group(1).endswith(".svg") else None
             tocmap_items.append(
-                f'<figure><img src="{img_m.group(1)}" alt="">'
-                f'<figcaption><span class="tocpg" data-mk="{mk}">00</span></figcaption></figure>')
+                "<figure>" + (_tsvg or f'<img src="{img_m.group(1)}" alt="">')
+                + f'<figcaption><span class="tocpg" data-mk="{mk}">00</span></figcaption></figure>')
         if first_pull is None:
             pm = re.search(r"^::: pull\n(.+)$", raw, re.M)
             if pm:

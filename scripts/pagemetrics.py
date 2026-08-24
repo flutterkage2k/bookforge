@@ -116,11 +116,12 @@ def analyze(pdf_path, frame_mm):
                     objs.append((inter.y0, inter.y1))
         vec_union = fitz.Rect()  # 비가구 벡터 드로잉 합집합 — SVG 도해 면적 (vecarea)
         for dr in page.get_drawings():
-            r = dr["rect"]
+            r = fitz.Rect(dr["rect"])
+            r.normalize()   # SVG 경로 방향에 따라 x0>x1로 오는 rect는 그대로 두면 is_empty
             key = (round(r.x0), round(r.y0), round(r.x1), round(r.y1))
             if key in fdraw:
                 continue
-            inter = fitz.Rect(r) & fitz.Rect(fl, ft, fr, fb)
+            inter = r & fitz.Rect(fl, ft, fr, fb)
             if not inter.is_empty and inter.height > 2 and inter.width > 2:
                 objs.append((inter.y0, inter.y1))
                 vec_union |= inter
@@ -130,6 +131,9 @@ def analyze(pdf_path, frame_mm):
             if "path" not in typ and typ != "fill-shade":
                 continue
             rr = fitz.Rect(rb)
+            # 뒤집힌 bbox를 정규화하지 않으면 is_empty로 버려져 도해 면적이 잉크에서
+            # 빠진다 — 도해가 있는 면이 '비었다'(G8-STRETCH)로 오판된 원인(실측 p13 gap 0.385).
+            rr.normalize()
             key = (round(rr.x0), round(rr.y0), round(rr.x1), round(rr.y1))
             if key in fdraw:
                 continue
