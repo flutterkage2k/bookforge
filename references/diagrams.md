@@ -70,8 +70,8 @@ chapters/ch-NN.md 안: ![캡션](../assets/fig-01.svg "출처: …")   ← 단�
 |---|---|
 | 병렬 요점 | `list-column-*` `list-grid-*` |
 | 순서·단계 | `sequence-timeline-simple`(106mm 실측 11.7pt) — `sequence-ascending-steps`는 desc 없이 라벨만(8.35pt 경계) |
-| 비교·SWOT | `compare-binary-*` `compare-swot` |
-| 계층·트리 | `hierarchy-tree-*` `hierarchy-mindmap-*` |
+| 비교 | 도해로 만들지 않고 본문 표로 — `compare-binary-*`는 좌우 머리글을 버리거나 "Pros/Cons"로 바꿔 넣는다(실측) |
+| 묶음·포함 | `hierarchy-structure` — 하위 2~3개, 라벨 5자 이내(106mm 실측 8.2pt). `hierarchy-tree-*`는 설치 카탈로그에 없고, `hierarchy-mindmap-*`은 106~151mm 전 판형에서 4~5pt로 불가 |
 | 수치 추이 | `chart-line-plain-text` `chart-bar-plain-text` (본문 실재 수치만) |
 
 판형이 좁은 스타일(essay 78mm)은 가로형 템플릿(`list-row-*`, 가로 타임라인)을 피한다.

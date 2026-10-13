@@ -656,7 +656,9 @@ def cmd_fix(book_dir: Path, rounds: int):
 ANTV_SAFE = """- sequence-steps-simple : 3~4단계 절차. data.sequences = [{label, desc}]. 라벨 6자 이내
 - sequence-timeline-simple : 세로 타임라인. data.sequences. 세로로 길어 bf.width는 twothirds 권장
 - list-row-simple-horizontal-arrow : 가로 3~4항목. data.sequences
-- list-column-simple-vertical-arrow : 세로 3~4항목. data.lists"""
+- list-column-simple-vertical-arrow : 세로 3~4항목. data.lists
+- hierarchy-structure : 하나가 여러 개를 묶는 구성(포함 관계). data.root = {label, children:[{label}]}.
+  children은 2~3개, 각 라벨 5자 이내(2개면 8자까지). 넘으면 좁은 판형에서 8pt 미달(실측)"""
 # compare-binary 계열은 뺐다 — 좌우 머리글(compares[].label)을 버리거나 "Pros/Cons"로
 # 바꿔 넣는다(실측). 머리글이 나오는 카드형은 좁은 판형에서 8pt 미달. 두 갈래 비교는 표로.
 
@@ -687,7 +689,7 @@ def _diagram_plan(book_dir: Path, style: str, limit: int) -> list:
 - 한 장에 하나까지. 장식용 그림은 만들지 않는다.
 
 track 선택:
-- "antv" : 3~4단계 절차, 가로/세로 항목 나열
+- "antv" : 3~4단계 절차, 가로/세로 항목 나열, 하나가 2~3개를 묶는 구성
 - 두 갈래 비교는 도해로 고르지 않는다 — 본문의 표가 더 정확하다
 - "authored" : 분기가 있는 흐름도, 역할별 처리 경로(스위밍레인), 구성 요소 연결도
 

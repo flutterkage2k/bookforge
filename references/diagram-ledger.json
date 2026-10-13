@@ -39,6 +39,13 @@
       "min_pt": 6.4,
       "verdict": "blocked",
       "note": "grid 계열 5.6~6.4pt — 전 계열 차단(프리픽스 매칭)"
+    },
+    {
+      "template": "hierarchy-structure",
+      "width_mm": 106,
+      "min_pt": 8.2,
+      "verdict": "limited",
+      "note": "2026-10-13 실측(academic 106mm~magazine 151mm). children 2~3개·라벨 5자 이내면 전 스타일 통과 (3개·짧은 라벨 academic 8.2pt). 2개면 8자 라벨까지 통과(8.4pt). 4개 이상은 insight 이상 넓은 판형만, 5개는 magazine만 경계 통과 — 일괄 금지로 둔다."
     }
   ],
   "blocked_prefixes": [
