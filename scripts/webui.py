@@ -22,9 +22,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fontpick  # noqa: E402
 from styles_ko import STYLES as STYLE_KO  # noqa: E402
 
+# 집필 모델 선택지. 값은 claude CLI --model에 그대로 간다.
+# 첫 항목이 새 책 기본값. sonnet·opus는 CLI 별칭이라 늘 최신판을 부른다.
+MODELS = {"opus": "Opus (기본 · 추천)",
+          "sonnet": "Sonnet (빠름 · 사용량 적음)",
+          "claude-fable-5": "Fable 5 (최신 · 사용량 많음)"}
+
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 CHAPTER_RE = re.compile(r"^ch-[0-9]{2,3}\.md$")
-EDITABLE = ("book.json", "outline.json", "research.md")
+EDITABLE = ("book.json", "outline.json", "research.md", "review.md")
 STYLES = list(STYLE_KO)
 LENGTHS = {"short": "짧게", "standard": "보통", "long": "길게"}
 # 스타일 고르기용 견본 — examples/showcase에 이미 들어 있는 실물 산출물이다.
@@ -209,7 +215,7 @@ const api=(u,d)=>fetch(u,d&&{method:'POST',body:JSON.stringify(d)})
   .catch(()=>({error:'서버에 연결할 수 없습니다. 터미널에서 서버가 살아 있는지 확인하세요.'}));
 const esc=s=>String(s??'').replace(/[&<>"']/g,
   c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const STYLES=%STYLES%, LENGTHS=%LENGTHS%;
+const STYLES=%STYLES%, LENGTHS=%LENGTHS%, MODELS=%MODELS%;
 let book=null, state=null, step=1, chap=null, newStyle='practical';
 
 const STEPS=[
@@ -321,6 +327,8 @@ const PANEL={
      <div style="flex:1"><label>저자</label><input id=nauthor placeholder="지은이"></div>
      <div style="flex:1"><label>분량</label><select id=nlen>${
        Object.entries(LENGTHS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
+     <div style="flex:1"><label>집필 모델</label><select id=nmodel>${
+       Object.entries(MODELS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select></div>
    </div>
    <label>스타일</label>
    <p class=hint style="margin:0 0 8px">아래는 각 스타일로 실제 만든 책의 표지와 본문 지면입니다.
@@ -385,6 +393,7 @@ const PANEL={
      <button class=primary onclick="agent('all')">AI에게 전체 집필 맡기기</button>
      <button onclick="agent('chapter',chap)">이 장만 다시 쓰게 하기</button>
      <button onclick="agent('diagrams')">AI에게 도해 넣기</button>
+     <button onclick="agent('review')" title="Opus가 사실·모순을, Sonnet이 읽기 쉬움·문장을 봅니다. 확실한 오류만 고치고 나머지는 review.md에 남깁니다">AI 검수 (Opus·Sonnet)</button>
      <select id=imgsize title="이미지 폭 — 세로로 긴 스크린샷은 절반을 권합니다">
        <option value=half>이미지 폭: 절반</option>
        <option value=twothirds>이미지 폭: 본문의 2/3</option>
@@ -400,6 +409,9 @@ const PANEL={
      3곳 골라 SVG나 차트를 만들어 넣습니다(에세이 스타일은 무이미지 원칙이라 건너뜁니다).
      자동 집필은 장당 1분 안팎 걸립니다. 목차의 요약과
      2단계 자료를 근거로 씁니다 — 자료에 없는 수치는 쓰지 않도록 시켰습니다.</p>
+   <details style="margin-top:12px" ontoggle="if(this.open)loadReview()">
+     <summary class=muted>검수 기록 (review.md) — 반영하지 않은 제안은 여기서 보고 직접 고치세요</summary>
+     <textarea id=tarev rows=14 readonly placeholder="아직 검수를 돌리지 않았습니다"></textarea></details>
    <details style="margin-top:12px"><summary class=muted>쓸 수 있는 문법</summary>
      <table><tr><th>요소</th><th>쓰는 법</th></tr>
      <tr><td>절 / 항</td><td><code>## 절 제목</code> · <code>### 항 제목</code></td></tr>
@@ -476,6 +488,9 @@ function metaForm(){
       <div style="flex:1"><label>브랜드색 (#rrggbb)</label><input id=mbrand value="${esc(b.brand||'')}"></div>
     </div>
     <div class=row>
+      <div style="flex:1"><label>집필 모델 (맡기기·조사·도해에 쓰입니다)</label>
+        <select id=mmodel>${Object.entries(MODELS).map(([k,v])=>
+          `<option value="${k}" ${((b.model||'opus')===k)?'selected':''}>${esc(v)}</option>`).join('')}</select></div>
       <div style="flex:1"><label>조판 표기 (판권면 · 비우면 그 줄이 빠집니다)</label>
         <input id=mtypeset placeholder="bookforge" value="${esc(b.typesetter===undefined?'bookforge':b.typesetter)}"></div>
     </div>
@@ -509,7 +524,7 @@ async function restyle(){
 async function saveMeta(){
   const r=await api('/api/meta',{name:book,title:$('mtitle').value,subtitle:$('msub').value,
     author:$('mauthor').value,publisher:$('mpub').value,date:$('mdate').value,
-    brand:$('mbrand').value,typesetter:$('mtypeset').value,
+    brand:$('mbrand').value,typesetter:$('mtypeset').value,model:$('mmodel').value,
     ...($('mseries')?{series:$('mseries').value,series_no:$('mseriesno').value}:{})});
   $('log').textContent=r.out||r.error;
   if(!r.error) open_(book);
@@ -685,6 +700,10 @@ async function loadFile(path,ta){
   el.oninput=()=>{ drafts[k]=el.value; };
 }
 window.addEventListener('beforeunload', e=>{ if(anyDirty()){ e.preventDefault(); e.returnValue=''; } });
+async function loadReview(){
+  const d=await api(`/api/file?name=${book}&path=review.md`);
+  const el=$('tarev'); if(el) el.value=d.text||'';
+}
 async function loadChapter(){ await loadFile(chap,'ta4'); armImagePaste(); }
 // 스크린샷을 복사해 원고에 바로 붙여넣기 — 파일 업로드와 같은 경로를 탄다
 function armImagePaste(){
@@ -732,7 +751,8 @@ async function saveOutline(){
 }
 async function create(){
   const r=await api('/api/new',{name:$('nname').value,title:$('ntitle').value,subtitle:$('nsub').value,
-    author:$('nauthor').value,length:$('nlen').value,style:newStyle});
+    author:$('nauthor').value,length:$('nlen').value,style:newStyle,
+    model:$('nmodel').value});
   $('log').textContent=r.out||r.error;
   if(!r.error && r.code===0){ await boot(); await open_($('nname').value); go(2); }
 }
@@ -854,7 +874,7 @@ def start_job(name: str, task: str, target: str | None,
             raise ValueError(f"이미 작업 중입니다: {JOB['name']} / {JOB['task']}")
         JOB["running"] = True
     d = book_dir(name)
-    if task not in ("research", "outline", "chapter", "all", "diagrams", "fix", "auto"):
+    if task not in ("research", "outline", "chapter", "all", "diagrams", "fix", "auto", "review"):
         raise ValueError("unknown task")
     argv = [sys.executable, str(SKILL / "scripts/agent.py"), task, str(d)]
     if web and task in ("research", "auto"):
@@ -1302,6 +1322,9 @@ def scaffold(data: dict) -> dict:
                          " (제목에는 한글·일본어를 자유롭게 쓰세요)")
     if data.get("style") not in STYLES:
         raise ValueError("bad style")
+    model = data.get("model") or "opus"
+    if model not in MODELS:
+        raise ValueError("bad model")
     length = data.get("length") or "short"
     if length not in LENGTHS:
         raise ValueError("bad length")
@@ -1314,6 +1337,12 @@ def scaffold(data: dict) -> dict:
     p = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     out = (p.stdout + p.stderr).strip()
     if p.returncode == 0:
+        # 기본값도 기록한다 — 나중에 기본값이 바뀌어도 이 책은 고른 모델로 돈다
+        bp = books_root() / name / "book.json"
+        book = json.loads(bp.read_text(encoding="utf-8"))
+        book["model"] = model
+        bp.write_text(json.dumps(book, ensure_ascii=False, indent=2), encoding="utf-8")
+        out += f"\n집필 모델: {model}"
         # 기본 폰트 물려주기 — 실패해도 책 생성 자체는 살린다(스타일에 따라 거부될 수 있다)
         for lang, family in (load_settings().get("default_fonts") or {}).items():
             r = subprocess.run([sys.executable, str(SKILL / "scripts/fontpick.py"), "set",
@@ -1395,6 +1424,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 styles = [[k, ko, desc] for k, (ko, desc) in STYLE_KO.items()]
                 page = (PAGE.replace("%STYLES%", json.dumps(styles, ensure_ascii=False))
                             .replace("%LENGTHS%", json.dumps(LENGTHS, ensure_ascii=False))
+                            .replace("%MODELS%", json.dumps(MODELS, ensure_ascii=False))
                             .replace("%VERSION%", VERSION or server_version()))
                 return self._send(200, "text/html; charset=utf-8", page.encode())
             if u.path == "/api/settings":
@@ -1509,11 +1539,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 d = book_dir(data["name"])
                 book = json.loads((d / "book.json").read_text())
                 for k in ("title", "subtitle", "author", "publisher", "date", "brand",
-                          "typesetter", "series", "series_no"):
+                          "typesetter", "series", "series_no", "model"):
                     if k in data:
                         v = (data[k] or "").strip()
                         if k == "brand" and v and not re.fullmatch(r"#[0-9a-fA-F]{6}", v):
                             raise ValueError("브랜드색은 #rrggbb 형식이어야 합니다")
+                        if k == "model" and v and v not in MODELS:
+                            raise ValueError("모르는 모델입니다")
                         # typesetter·publisher는 빈 값 자체가 뜻을 갖는다 — "그 줄을 빼라".
                         # 지워버리면 Typst 기본값 "bookforge"가 되살아나 비우기가 동작하지 않는다.
                         if v or k in ("typesetter", "publisher", "series", "series_no"):

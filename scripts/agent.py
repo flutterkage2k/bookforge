@@ -67,15 +67,20 @@ def die(msg: str):
     sys.exit(1)
 
 
-MODEL = "sonnet"  # 조사·집필·수정 모두 sonnet으로 충분하다(--model로 교체 가능)
+# 책의 글을 만드는 모델(조사·목차·집필·도해). 책 정보에서 바꿀 수 있다.
+MODEL = "opus"
+# 판단이 거의 없는 기계적 작업 — 분량 조절·풀퀘트 문장 고르기·단락 나누기.
+# 게이트 루프는 한 권에 수십 번 돌 수 있어 여기에 큰 모델을 쓰면 사용량만 커진다.
+FAST = "sonnet"
 
 
-def claude(prompt: str, timeout: int = 900, tools: str | None = None) -> str:
+def claude(prompt: str, timeout: int = 900, tools: str | None = None,
+           model: str | None = None) -> str:
     """헤드리스 claude 호출. tools를 주지 않으면 도구 없이 텍스트만 받는다."""
     exe = shutil.which("claude")
     if not exe:
         die("`claude` 명령을 찾지 못했습니다. Claude Code를 설치하면 자동 집필이 켜집니다.")
-    argv = [exe, "-p", prompt, "--output-format", "text", "--model", MODEL]
+    argv = [exe, "-p", prompt, "--output-format", "text", "--model", model or MODEL]
     if tools:
         argv += ["--allowed-tools", tools]
     try:
@@ -548,7 +553,7 @@ def cmd_fix(book_dir: Path, rounds: int):
 --- 본문 시작 ---
 {body}
 --- 본문 끝 ---"""
-                picked = (claude(prompt) or "").strip().strip('"「」')
+                picked = (claude(prompt, model=FAST) or "").strip().strip('"「」')
                 # 모델 응답을 믿지 않는다 — 본문에 실재하는지 여기서 검증하고,
                 # 실패하면 콜아웃을 지운다(없는 말을 인용하느니 인용을 뺀다).
                 if picked and picked in body and len(picked) >= 12:
@@ -577,7 +582,7 @@ def cmd_fix(book_dir: Path, rounds: int):
 --- 원고 시작 ---
 {text}
 --- 원고 끝 ---"""
-                new_text = as_chapter(claude(prompt))
+                new_text = as_chapter(claude(prompt, model=FAST))
                 if not new_text:
                     print(f"  {f}: 단락 분할 응답을 받지 못해 건너뜀", flush=True)
                     continue
@@ -623,9 +628,9 @@ def cmd_fix(book_dir: Path, rounds: int):
 --- 원고 시작 ---
 {text}
 --- 원고 끝 ---"""
-            new = as_chapter(claude(prompt))
+            new = as_chapter(claude(prompt, model=FAST))
             if new and not keeps_images(text, new):
-                new = as_chapter(claude(prompt + "\n\n주의: 지난 응답에서 이미지 문단(![...])이 "
+                new = as_chapter(claude(model=FAST, prompt=prompt + "\n\n주의: 지난 응답에서 이미지 문단(![...])이 "
                                         "사라졌다. 이미지 문단은 한 글자도 바꾸지 말고 제자리에 둬라."))
             if not new:
                 history.pop(f, None)   # 아무것도 안 했으니 지난 기록도 지운다
@@ -955,6 +960,145 @@ def cmd_diagrams(book_dir: Path, limit: int):
     print(f"OK diagrams: {len(made)}개" + ("\n  " + "\n  ".join(made) if made else ""))
 
 
+# ── 검수 ──────────────────────────────────────────────────────
+# 두 검수자가 책 한 권을 통째로 읽고 지적만 한다. 다시 쓰지 않는다.
+# 역할을 나눈다 — 같은 일을 시키면 같은 곳만 본다.
+REVIEWERS = (
+    ("opus", "사실·일관성", """- 사실 오류: 틀린 설명, 존재하지 않는 기능·메뉴·명령, 잘못된 순서
+- 장 사이 모순: 앞 장과 뒤 장이 같은 대상을 다르게 말하는 곳
+- 용어 불일치: 같은 대상을 장마다 다른 이름으로 부르는 곳
+- 일본어·영어 표기 오류"""),
+    ("sonnet", "독자·문장", """- 처음 읽는 독자가 막히는 곳: 설명 없이 나온 용어, 건너뛴 단계
+- 어색한 한국어: 번역투, 비문, 주어와 서술어가 안 맞는 문장
+- AI 티: 같은 문장 틀의 반복, 과장된 수사, 뜻 없는 접속사
+- 오탈자"""),
+)
+_STRUCT_TOKENS = ("```", "![", ":::", "\n")
+
+
+def _review_prompt(focus: str, checklist: str, book_text: str) -> str:
+    return f"""아래는 한국어 단행본 원고 전체다. 너는 이 책의 「{focus}」 담당 검수자다.
+
+볼 것:
+{checklist}
+
+규칙:
+- 지적만 한다. 원고를 다시 쓰지 않는다.
+- quote는 원고에서 글자 그대로 복사한 짧은 구간(10~80자)이다. 한 글자라도 바꾸면 그 지적은 버려진다.
+- replace는 quote 자리에 그대로 들어갈 고친 문장이다. 줄바꿈과 마크다운 기호는 넣지 않는다.
+- level: 확실히 틀린 것(사실 오류·모순·오탈자·비문)은 "error", 취향이나 개선 제안은 "suggest".
+- 진짜 문제만. 지적이 없으면 []를 출력한다.
+
+JSON 배열만 출력한다(설명·코드펜스 금지):
+[{{"file": "ch-03.md", "quote": "...", "problem": "무엇이 왜 문제인지 한 문장", "replace": "...", "level": "error"}}]
+
+{book_text}"""
+
+
+def _parse_findings(raw: str) -> list:
+    raw = strip_fence(raw or "")
+    a, b = raw.find("["), raw.rfind("]")
+    if a < 0 or b <= a:
+        return []
+    try:
+        data = json.loads(raw[a:b + 1])
+    except json.JSONDecodeError:
+        return []
+    return [x for x in data if isinstance(x, dict)]
+
+
+def cmd_review(book_dir: Path) -> dict:
+    """Opus·Sonnet이 책 전체를 검수한다. 확실한 오류(error)만 자동 반영하고
+    나머지는 review.md에 남겨 사람이 판단하게 한다.
+
+    반영은 모델 재작성이 아니라 quote → replace 문자열 치환이다. 재작성은 이미지
+    문단을 떨어뜨리거나 메모를 흘린 전력이 있다 — 치환이면 그 표면 자체가 없다.
+    검수자가 지어낸 인용(원고에 없는 quote)은 버린다.
+    """
+    outline = json.loads((book_dir / "outline.json").read_text(encoding="utf-8"))["chapters"]
+    texts = {}
+    for c in outline:
+        cp = book_dir / "chapters" / c["file"]
+        if cp.exists():
+            texts[c["file"]] = cp.read_text(encoding="utf-8")
+    if not texts:
+        die("검수할 원고가 없습니다. 먼저 집필하세요.")
+    book_text = "\n\n".join(f"=== {f} ===\n{t}" for f, t in texts.items())
+
+    def run(rv):
+        model, focus, checklist = rv
+        try:
+            found = _parse_findings(claude(_review_prompt(focus, checklist, book_text), model=model))
+        except SystemExit:
+            print(f"  {model} 검수 실패 — 다른 검수자 결과만 씁니다", flush=True)
+            found = []
+        for x in found:
+            x["by"] = model
+        return found
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        findings = [x for batch in ex.map(run, REVIEWERS) for x in batch]
+
+    applied, suggested, dropped = [], [], []
+    edits = {f: [] for f in texts}     # 원문 좌표 (시작, 끝, 교체문)
+    for x in findings:
+        f, q, rep = x.get("file", ""), x.get("quote", ""), x.get("replace", "")
+        if f not in texts or not q or q not in texts[f]:
+            dropped.append(x)
+            continue
+        line = next((ln for ln in texts[f].splitlines() if q in ln), "")
+        structural = line.lstrip().startswith(("![", ":::", "#", "|"))
+        # 원문에 없던 숫자(연도·버전·수량)를 새로 넣는 교체는 자동 반영하지 않는다 —
+        # 검수자가 지어낸 사실이 근거 없이 책에 박히는 경로가 된다(실측: "2024년에 중단").
+        new_nums = set(re.findall(r"\d+", rep)) - set(re.findall(r"\d+", q))
+        if x.get("level") != "error" or structural or not rep or new_nums \
+                or any(t in rep for t in _STRUCT_TOKENS):
+            if new_nums:
+                x["problem"] = (x.get("problem", "") + f" (새 숫자 {', '.join(sorted(new_nums))} 포함 — 출처 확인 후 직접 반영)").strip()
+            suggested.append(x)
+            continue
+        a = texts[f].find(q)
+        b = a + len(q)
+        # 겹침은 원문 좌표로 판단한다 — 고친 결과 위에서 다시 찾으면 앞 수정을 덮어쓴다(실측)
+        if any(a < e and s0 < b for s0, e, _ in edits[f]):
+            suggested.append(x)
+            continue
+        edits[f].append((a, b, rep))
+        applied.append(x)
+
+    current = dict(texts)
+    for f, es in edits.items():
+        t = texts[f]
+        for a, b, rep in sorted(es, reverse=True):   # 뒤에서부터 바꿔야 앞 좌표가 안 밀린다
+            t = t[:a] + rep + t[b:]
+        current[f] = t
+
+    for f, t in current.items():
+        if t != texts[f] and keeps_images(texts[f], t):
+            safe_chapter(book_dir, f).write_text(t, encoding="utf-8")
+
+    def fmt(x):
+        who = {"opus": "Opus", "sonnet": "Sonnet"}.get(x["by"], x["by"])
+        return (f"- `{x.get('file')}` [{who}] {x.get('problem', '').strip()}\n"
+                f"  - 원문: {x.get('quote', '')}\n  - 제안: {x.get('replace', '')}")
+
+    import datetime
+    L = [f"# 검수 기록 — {datetime.date.today().isoformat()}", "",
+         "검수자: Opus(사실·일관성), Sonnet(독자·문장). 확실한 오류만 자동 반영했습니다.", "",
+         f"## 자동 반영 {len(applied)}건", ""] + [fmt(x) for x in applied] + \
+        ["", f"## 제안 {len(suggested)}건 — 반영하지 않음, 직접 판단하세요", ""] + \
+        [fmt(x) for x in suggested] + \
+        ["", f"## 버림 {len(dropped)}건 — 원고에 없는 인용을 근거로 한 지적", ""] + \
+        [fmt(x) for x in dropped]
+    (book_dir / "review.md").write_text("\n".join(L) + "\n", encoding="utf-8")
+    print(f"OK review: 자동 반영 {len(applied)} · 제안 {len(suggested)} · 버림 {len(dropped)}"
+          f" → review.md", flush=True)
+    for x in suggested[:8]:
+        print("  제안 " + fmt(x).splitlines()[0][2:], flush=True)
+    return {"applied": applied, "suggested": suggested, "dropped": dropped}
+
+
 def cmd_auto(book_dir: Path, rounds: int, web: bool = False,
              max_queries: int = 6, today: str = "", figs: int = 0):
     """주제만 있는 상태에서 통과본까지 — 조사 → 목차 → 집필 → (빌드·검사·수정) 반복."""
@@ -975,9 +1119,12 @@ def cmd_auto(book_dir: Path, rounds: int, web: bool = False,
     with ThreadPoolExecutor(max_workers=3) as ex:
         list(ex.map(lambda c: cmd_chapter(book_dir, c["file"]), outline))
     if figs:
-        print("[4/5] 도해 생성")
+        print("[4/6] 도해 생성")
         cmd_diagrams(book_dir, figs)
-    print("[5/5] 빌드·검사·수정 반복")
+    # 검수는 게이트 루프 앞에 둔다 — 뒤에 두면 반영하면서 지면이 다시 흔들린다
+    print("[5/6] 검수 (Opus 사실·일관성 · Sonnet 독자·문장)")
+    cmd_review(book_dir)
+    print("[6/6] 빌드·검사·수정 반복")
     cmd_fix(book_dir, rounds)
 
 
@@ -1024,12 +1171,13 @@ def demo():
 def main():
     global MODEL
     ap = argparse.ArgumentParser(description="목차·원고를 claude CLI에게 맡긴다")
-    ap.add_argument("task", choices=["research", "outline", "chapter", "all", "diagrams", "fix", "auto", "selfcheck"])
+    ap.add_argument("task", choices=["research", "outline", "chapter", "all", "diagrams", "fix", "auto", "review", "selfcheck"])
     ap.add_argument("book_dir", nargs="?")
     ap.add_argument("target", nargs="?")
     ap.add_argument("--topic")
     ap.add_argument("--rounds", type=int, default=6)
-    ap.add_argument("--model", default=MODEL, help="claude 모델 (기본 sonnet)")
+    ap.add_argument("--model", default=None,
+                    help="claude 모델. 생략하면 book.json의 model, 그것도 없으면 opus")
     ap.add_argument("--web", action="store_true", help="조사 단계에서 웹 검색으로 사실 확인")
     ap.add_argument("--max-queries", type=int, default=6, help="웹 검색 최대 횟수(=질문 수)")
     ap.add_argument("--today", default="", help="확인일로 기록할 날짜 (YYYY-MM-DD)")
@@ -1037,7 +1185,8 @@ def main():
     if "--selfcheck" in sys.argv[1:]:   # 다른 스크립트와 같은 형태도 받는다
         return demo()
     a = ap.parse_args()
-    MODEL = a.model
+    if a.model:
+        MODEL = a.model
     if a.task == "selfcheck":
         return demo()
     if not a.book_dir:
@@ -1045,6 +1194,10 @@ def main():
     d = Path(a.book_dir).resolve()
     if not (d / "book.json").exists():
         die(f"책 폴더가 아닙니다: {d}")
+    if not a.model:
+        # 책마다 모델을 고를 수 있다(웹 UI 책 정보). 명시 플래그가 항상 이긴다.
+        MODEL = json.loads((d / "book.json").read_text(encoding="utf-8")).get("model") or MODEL
+    print(f"모델: 집필 {MODEL} · 분량 조절 {FAST}", flush=True)
     (d / "chapters").mkdir(exist_ok=True)
     if a.task == "research":
         cmd_research(d, a.topic, a.web, a.max_queries, a.today)
@@ -1054,6 +1207,8 @@ def main():
         cmd_auto(d, a.rounds, a.web, a.max_queries, a.today, a.figs)
     elif a.task == "diagrams":
         cmd_diagrams(d, a.figs)
+    elif a.task == "review":
+        cmd_review(d)
     elif a.task == "fix":
         cmd_fix(d, a.rounds)
     elif a.task == "chapter":
