@@ -16,7 +16,7 @@ import { convertForeignObjectText, fontFaceCss, normalizeAuthoredSvg, pixelSelfC
 
 const SKILL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FONT_DIR = path.join(SKILL, "assets", "fonts");
-const CONVERTER_VERSION = 12; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
+const CONVERTER_VERSION = 13; // fo2text/트림 알고리즘 변경 시 올려서 캐시 전체 무효화
 const PIXEL_TOLERANCE = 0.02;
 const MM2PT = 72 / 25.4;
 
@@ -166,6 +166,20 @@ function contrast(a, b) {
   const [x, y] = [relLum(a), relLum(b)].sort((m, n) => n - m);
   return (x + 0.05) / (y + 0.05);
 }
+// DSL에 쓴 글자가 실제로 그려졌는지 대조한다. AntV 템플릿은 데이터 일부를 조용히
+// 버린다(실측: compare-binary 계열이 좌우 머리글을 버리거나 "Pros/Cons"로 바꿔 넣음).
+// G13은 "그려진 글자가 PDF에 있는가"만 보므로 이 누락은 지금까지 통과했다.
+function missingLabels(dsl, labels) {
+  const norm = (t) => String(t).replace(/\s+/g, "");
+  const rendered = norm(labels.join(""));
+  const want = [];
+  for (const line of String(dsl).split("\n")) {
+    const m = line.match(/^\s*(?:-\s*)?(?:label|desc|title)\s+(.+?)\s*$/);
+    if (m) want.push(m[1]);
+  }
+  return want.filter((w) => !rendered.includes(norm(w)));
+}
+
 function fixLabelContrast(svg, ink) {
   const inkHex = normHex(ink) || "#1a1a1a";
   let lastFill = "#ffffff"; // 아무 도형도 앞서지 않으면 종이 위로 본다
@@ -470,6 +484,9 @@ for (const file of sidecars) {
   // 글자 하한은 트림 후 최종 좌표계 기준으로 검사 (트림은 실크기를 키우는 방향)
   const floors = fontFloorViolations(converted, widthKey);
   if (floors.length) fail(`${name}: 도해 내 글자 크기 하한 위반 — ${floors.join("; ")} (bf.width=${widthKey} 기준) — 스타일을 바꾼 책이라면 이 도해는 옛 스타일 기준입니다. 4단계 「AI에게 도해 넣기」로 다시 생성하세요`);
+
+  const lost = missingLabels(dsl, labels);
+  if (lost.length) fail(`${name}: 쓴 글자 일부가 도해에 그려지지 않음 — ${lost.map((x) => `「${x}」`).join(", ")} — 이 템플릿이 해당 데이터를 표시하지 않습니다. 다른 템플릿을 쓰거나 표로 바꾸세요`);
 
   writeFileSync(outSvg, `<!--bf:dsl=sha256:${hash}-->\n${converted}`);
   writeFileSync(outLabels, JSON.stringify(labels, null, 2));
